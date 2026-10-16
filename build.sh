@@ -48,6 +48,10 @@ run() {                                         # run LOG command...: quiet unle
     local log=$LOGS/$1; shift
     if ! "$@" > "$log" 2>&1; then
         tail -20 "$log" >&2
+        if [ -n "${GITHUB_ACTIONS:-}" ]; then     # an annotation: readable without signing in
+            echo "::error title=build.sh: $(basename "$log")::$(tail -15 "$log" |
+                sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')"
+        fi
         fail "failed, see $log"
     fi
 }

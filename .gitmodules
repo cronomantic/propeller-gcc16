@@ -4,7 +4,8 @@
 #   binutils-propeller  <- totalspectrum/binutils-propeller
 #   proplib             <- totalspectrum/proplib
 #   propeller-load      <- dbetz/propeller-load
-#   OpenSpin            <- parallaxinc/OpenSpin
+#   OpenSpin            <- parallaxinc/OpenSpin (branch propgcc16: a fix for
+#                          the include path on Windows)
 [submodule "deps/binutils-propeller"]
 	path = deps/binutils-propeller
 	url = ../binutils-propeller.git
@@ -21,3 +22,4 @@
 	path = deps/OpenSpin
 	url = ../OpenSpin.git
 	shallow = true
+	branch = propgcc16
