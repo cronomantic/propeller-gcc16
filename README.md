@@ -82,6 +82,16 @@ hub-memory builds are run too and must report success:
 lists as fixed (64-bit division, `float` to `double`, `__builtin_ctz`,
 the new MOVS/MOVD/MOVI and ADDS/SUBS patterns).
 
+## Continuous integration and binaries
+
+`.github/workflows/build.yml` builds the toolchain on Linux (Ubuntu
+24.04) and on Windows (MSYS2, MinGW-w64) on every push and pull request,
+and runs `tests/run.sh` (compile and link only: there is no Propeller
+emulator on the runners).  Each run keeps the installed toolchain as an
+artifact (`propgcc-16-linux-x86_64.tar.xz`,
+`propgcc-16-windows-x86_64.zip`, with the MinGW runtime DLLs next to the
+programs).  Pushing a tag `v*` also publishes them as a GitHub release.
+
 ## Following the port upstream
 
 David-EIPI/propeller-gcc16 publishes the back end as patches against the

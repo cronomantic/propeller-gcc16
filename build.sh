@@ -22,6 +22,12 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PREFIX=${PREFIX:-$HOME/propgcc-16}
 WORK=${WORK:-$ROOT/work}
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
+case "$(uname -s)" in                           # the loader's makefile wants the host
+    Linux*)               LOADER_OS=${LOADER_OS:-linux} ;;
+    MINGW*|MSYS*|CYGWIN*) LOADER_OS=${LOADER_OS:-msys} ;;
+    Darwin*)              LOADER_OS=${LOADER_OS:-macosx} ;;
+    *)                    LOADER_OS=${LOADER_OS:-linux} ;;
+esac
 GCC_VERSION=16.2.0
 GCC_TARBALL=gcc-$GCC_VERSION.tar.xz
 GCC_URL=https://ftp.gnu.org/gnu/gcc/gcc-$GCC_VERSION/$GCC_TARBALL
@@ -101,10 +107,10 @@ step "OpenSpin and the loader"
 # propeller-load compiles a Spin helper while it builds: openspin first
 rm -rf OpenSpin && cp -a "$ROOT/deps/OpenSpin" OpenSpin
 run openspin.log make -C OpenSpin
-cp OpenSpin/build/openspin "$PREFIX/bin/"
+cp OpenSpin/build/openspin* "$PREFIX/bin/"             # openspin.exe on Windows
 rm -rf propeller-load build-loader && cp -a "$ROOT/deps/propeller-load" propeller-load
-run loader-make.log make -C propeller-load OS=linux TARGET="$PREFIX" BUILDROOT="$WORK/build-loader"
-run loader-install.log make -C propeller-load OS=linux TARGET="$PREFIX" BUILDROOT="$WORK/build-loader" install
+run loader-make.log make -C propeller-load OS="$LOADER_OS" TARGET="$PREFIX" BUILDROOT="$WORK/build-loader"
+run loader-install.log make -C propeller-load OS="$LOADER_OS" TARGET="$PREFIX" BUILDROOT="$WORK/build-loader" install
 
 step "done"
 propeller-elf-gcc --version | head -1
