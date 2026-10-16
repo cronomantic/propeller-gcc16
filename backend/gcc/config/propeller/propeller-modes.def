@@ -30,3 +30,5 @@
 CC_MODE (CCUNS);
 CC_MODE (CC_Z);
 CC_MODE (CC_C);
+/* set by ADDS/SUBS: the C flag holds signed overflow rather than carry */
+CC_MODE (CC_V);

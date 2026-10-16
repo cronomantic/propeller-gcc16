@@ -1104,6 +1104,11 @@ ___extendsfdf2
 		mov	A, r0
 		lcall	#__load_float_code
 		call	#__FUnpack
+		'' __FUnpack produces a 4.28 mantissa in A only, but __DPack
+		'' packs a 4.60 mantissa held in A:Alo.  Alo must be cleared
+		'' here or the low 29 bits of the resulting double are junk
+		'' left over from whatever last used r13.
+		mov	Alo, #0
 		lcall	#__load_double_code
 		lcall	#__DPack
 		RESTOREREGS

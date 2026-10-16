@@ -23,7 +23,8 @@
 
 extern void propeller_output_label (FILE *file, const char * name);
 extern void propeller_print_operand (FILE *file, rtx op, int letter);
-extern void propeller_print_operand_address (FILE *file, rtx addr);
+extern void propeller_print_operand_address (FILE *file, machine_mode mode,
+                                            rtx addr);
 extern bool propeller_print_operand_punct_valid_p (unsigned char code);
 extern void propeller_output_seqend (FILE *);
 extern void propeller_weaken_label (FILE *file, const char *name);
@@ -33,9 +34,15 @@ extern int propeller_can_use_return (void);
 
 extern bool propeller_cogaddr_p (rtx x);
 extern bool propeller_cogmem_p (rtx op);
+extern bool propeller_srconly_cogmem_p (rtx);
+extern bool propeller_cond_move_to_minmax (rtx *);
+extern bool propeller_cogvar_rmw_ok (rtx, rtx, rtx, rtx, rtx);
+extern bool propeller_shiftmask_p (rtx);
+extern void propeller_emit_overflow_branch (rtx);
 extern bool propeller_stack_operand_p (rtx op);
 extern bool propeller_legitimate_constant_p (enum machine_mode mode, rtx x);
-extern bool propeller_legitimate_address_p (enum machine_mode mode, rtx x, bool strict);
+extern bool propeller_legitimate_address_p (machine_mode mode, rtx x,
+                                           bool strict);
 extern bool propeller_const_ok_for_letter_p (HOST_WIDE_INT value, int c);
 
 extern HOST_WIDE_INT propeller_initial_elimination_offset (int from, int to);
@@ -70,7 +77,7 @@ extern bool propeller_forward_branch_p (rtx);
 extern void propeller_emit_stack_pushm (rtx *operands);
 extern void propeller_emit_stack_popm (rtx *operands, int doretaswell);
 
-extern void propeller_split_64bit_move (rtx dest, rtx src, enum machine_mode mode);
+extern void propeller_split_64bit_move (rtx, rtx, machine_mode);
 extern int propeller_reg_dead_peep (const rtx_insn* first, rtx reg);
 
 /* some variable declarations; we put them here rather than in propeller.h

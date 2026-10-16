@@ -20,79 +20,52 @@
    along with GCC; see the file COPYING3.  If not see
    <http://www.gnu.org/licenses/>.  */
 
+#define IN_TARGET_CODE 1
+
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
-#include "hash-table.h"
-#include "tm.h"
+#include "backend.h"
+#include "target.h"
 #include "rtl.h"
-#include "hash-set.h"
-#include "machmode.h"
-#include "vec.h"
-#include "double-int.h"
-#include "input.h"
-#include "alias.h"
-#include "symtab.h"
-#include "wide-int.h"
-#include "inchash.h"
 #include "tree.h"
-#include "fold-const.h"
+#include "gimple.h"
+#include "cfghooks.h"
+#include "cfgloop.h"
+#include "df.h"
+#include "memmodel.h"
+#include "tm_p.h"
 #include "stringpool.h"
+#include "attribs.h"
+#include "optabs.h"
+#include "regs.h"
+#include "emit-rtl.h"
+#include "recog.h"
+#include "cgraph.h"
+#include "diagnostic-core.h"
+#include "insn-config.h"
+#include "conditions.h"
+#include "alias.h"
+#include "fold-const.h"
 #include "stor-layout.h"
 #include "calls.h"
 #include "varasm.h"
-#include "obstack.h"
-#include "regs.h"
-#include "hard-reg-set.h"
-#include "insn-config.h"
-#include "conditions.h"
 #include "output.h"
 #include "insn-attr.h"
 #include "flags.h"
-#include "reload.h"
-#include "function.h"
-#include "hashtab.h"
-#include "statistics.h"
-#include "real.h"
-#include "fixed-value.h"
 #include "expmed.h"
 #include "dojump.h"
 #include "explow.h"
-#include "emit-rtl.h"
 #include "stmt.h"
 #include "expr.h"
-#include "insn-codes.h"
-#include "optabs.h"
-#include "diagnostic-core.h"
-#include "recog.h"
-#include "predict.h"
-#include "dominance.h"
-#include "cfg.h"
+#include "reload.h"
+#include "langhooks.h"
 #include "cfgrtl.h"
 #include "cfganal.h"
-#include "lcm.h"
 #include "cfgbuild.h"
 #include "cfgcleanup.h"
-#include "basic-block.h"
-#include "hash-map.h"
-#include "is-a.h"
-#include "plugin-api.h"
-#include "ipa-ref.h"
-#include "cgraph.h"
-#include "ggc.h"
 #include "except.h"
-#include "tm_p.h"
-#include "target.h"
-#include "sched-int.h"
-#include "target-def.h"
-#include "target-globals.h"
-#include "common/common-target.h"
-#include "debug.h"
-#include "langhooks.h"
-#include "df.h"
-#include "intl.h"
 #include "libfuncs.h"
-#include "params.h"
 #include "opts.h"
 #include "dumpfile.h"
 #include "gimple-expr.h"
@@ -101,6 +74,10 @@
 #include "rtl-iter.h"
 #include "sched-int.h"
 #include "sel-sched-ir.h"
+#include "target-globals.h"
+#include "common/common-target.h"
+#include "debug.h"
+#include "target-def.h"
 
 #ifndef GP_REG_NUM
 #define GP_REG_NUM 16 /* registers 0-15 are general purpose */
@@ -138,7 +115,7 @@ static rtx propeller_function_arg (cumulative_args_t cum, enum machine_mode mode
 static void propeller_function_arg_advance (cumulative_args_t cum, enum machine_mode mode,
                                 const_tree type, bool named ATTRIBUTE_UNUSED);
 
-static bool propeller_rtx_costs (rtx, int, int, int, int *, bool);
+static bool propeller_rtx_costs (rtx, machine_mode, int, int, int *, bool);
 static int propeller_address_cost (rtx, enum machine_mode, addr_space_t, bool);
 
 /* register classes */
@@ -412,13 +389,27 @@ propeller_handle_cogmem_attribute (tree *node,
   return NULL_TREE;
 }
 
-static const struct attribute_spec propeller_attribute_table[] =
-{  /* name, min_len, max_len, decl_req, type_req, fn_type_req, handler, affects_type_identity  */
-  { "naked",   0, 0, true, false,  false,  propeller_handle_func_attribute, false },
-  { "native",  0, 0, true, false,  false,  propeller_handle_func_attribute, false },
-  { "fcache",  0, 0, true, false,  false,  propeller_handle_func_attribute, false },
-  { "cogmem",  0, 0, false, false, false, propeller_handle_cogmem_attribute, false },
-  { NULL,  0, 0, false, false, false, NULL, false }
+static const attribute_spec propeller_gnu_attributes[] =
+{  /* name, min_len, max_len, decl_req, type_req, fn_type_req,
+      affects_type_identity, handler, exclude  */
+  { "naked",   0, 0, true,  false, false, false,
+    propeller_handle_func_attribute, NULL },
+  { "native",  0, 0, true,  false, false, false,
+    propeller_handle_func_attribute, NULL },
+  { "fcache",  0, 0, true,  false, false, false,
+    propeller_handle_func_attribute, NULL },
+  { "cogmem",  0, 0, false, false, false, false,
+    propeller_handle_cogmem_attribute, NULL }
+};
+
+static const scoped_attribute_specs propeller_gnu_attribute_table =
+{
+  "gnu", { propeller_gnu_attributes }
+};
+
+static const scoped_attribute_specs *const propeller_attribute_table[] =
+{
+  &propeller_gnu_attribute_table
 };
 
 /*
@@ -510,11 +501,20 @@ propeller_cogaddr_p (rtx x)
   print_rtl_single (stdout, x);
   printf("\n");
 #endif
-  if (!TARGET_LMM 
+  /* Cog memory is addressed in longs: the linker divides a cog symbol's byte
+     address by 4, so "sym+N" names a different register only when N is a
+     multiple of 4, and "sym+3" is just "sym" again.  The middle end narrows
+     e.g. (lshiftrt:SI (mem:SI sym) 24) into (mem:QI sym+3), which is right
+     for byte-addressable hub memory but here reads bits 0-7 of the register
+     instead of bits 24-31.  Refusing sub-word offsets makes such a narrowed
+     reference illegitimate, so the passes that try it (simplify-rtx through
+     fwprop, combine) re-validate, fail and keep the shift.  */
+  if (!TARGET_LMM
       && ( code == LABEL_REF
            || (code == CONST
                && GET_CODE (XEXP (x, 0)) == PLUS
                && GET_CODE (XEXP (XEXP (x, 0), 1)) == CONST_INT
+               && INTVAL (XEXP (XEXP (x, 0), 1)) % UNITS_PER_WORD == 0
                && propeller_cogaddr_p (XEXP (XEXP (x, 0), 0)) ) ))
     {
       return true;
@@ -548,6 +548,205 @@ propeller_cogmem_p (rtx op)
     if (propeller_cogaddr_p (op))
         return 1;
     return 0;
+}
+
+/*
+ * The P8X32A special purpose registers PAR, CNT, INA and INB are read-only
+ * and, per the Propeller Manual v1.2 (table on p.23, note 1), are "only
+ * accessible as a source register (i.e. mov dest, source)".  PHSA and PHSB
+ * carry note 2: they are "only readable as a source register; read-modify-
+ * write [is] not possible as a destination register".
+ *
+ * An instruction that puts one of these in its D field does not read the
+ * live value, so e.g. "wrlong CNT, r7" silently stores garbage instead of
+ * the system counter.  Return true for the cog registers that must never
+ * appear in the D field of an instruction that reads D.
+ */
+bool
+propeller_srconly_cogmem_p (rtx op)
+{
+    const char *name;
+
+    if (GET_CODE (op) != MEM)
+        return false;
+
+    op = XEXP (op, 0);
+    if (GET_CODE (op) != SYMBOL_REF)
+        return false;
+
+    name = XSTR (op, 0);
+    if (name == NULL)
+        return false;
+    if (*name == '*')
+        name++;
+
+    return (!strcmp (name, "PAR")  || !strcmp (name, "CNT")
+            || !strcmp (name, "INA")  || !strcmp (name, "INB")
+            || !strcmp (name, "PHSA") || !strcmp (name, "PHSB"));
+}
+
+/*
+ * Recognise a clamp done as a compare and a conditional move,
+ *
+ *     operands[1] <=> operands[2]          (the compare, setting cc)
+ *     if (cond) operands[4] = operands[5]  (the move, cc dead after)
+ *
+ * where the move target is one side of the compare and the value it gets is
+ * the other: that is "D = min/max (D, X)", one MIN/MAX/MINS/MAXS.  The
+ * middle end does this itself when D is a register, but a cog variable is
+ * memory to it, and it will not turn a conditional store into an
+ * unconditional one; the cond_exec only appears after reload.  "D >= c" with
+ * a constant is canonicalised to "D > c-1", so also accept the value being
+ * one past the compared constant in the direction of the test.  On success
+ * set operands[6] to the min/max rtx and return true.
+ */
+bool
+propeller_cond_move_to_minmax (rtx *operands)
+{
+  rtx cc = operands[0];
+  rtx d = operands[4], v = operands[5], x;
+  enum rtx_code code = GET_CODE (operands[3]), mm;
+
+  if (!REG_P (cc) || REGNO (cc) != CC_REG)
+    return false;
+  if (MEM_P (d) && MEM_VOLATILE_P (d))
+    return false;
+
+  if (rtx_equal_p (operands[1], d))
+    x = operands[2];
+  else if (rtx_equal_p (operands[2], d))
+    {
+      x = operands[1];
+      code = swap_condition (code);
+    }
+  else
+    return false;
+
+  /* Now the move reads "if (D <code> X) D = V".  */
+  if (!rtx_equal_p (x, v))
+    {
+      if (!CONST_INT_P (x) || !CONST_INT_P (v))
+	return false;
+      if ((code == GT || code == GTU) && INTVAL (v) == INTVAL (x) + 1)
+	code = (code == GT) ? GE : GEU;
+      else if ((code == LT || code == LTU) && INTVAL (v) == INTVAL (x) - 1)
+	code = (code == LT) ? LE : LEU;
+      else
+	return false;
+    }
+
+  switch (code)
+    {
+    case LTU: case LEU: mm = UMAX; break;	/* D below V: raise it to V */
+    case GTU: case GEU: mm = UMIN; break;	/* D above V: lower it to V */
+    case LT:  case LE:  mm = SMAX; break;
+    case GT:  case GE:  mm = SMIN; break;
+    default:
+      return false;
+    }
+
+  operands[6] = gen_rtx_fmt_ee (mm, SImode, copy_rtx (d), v);
+  return true;
+}
+
+/* The symbol a direct cog memory address is based on, or NULL.  */
+static rtx
+propeller_cogaddr_base (rtx addr)
+{
+  if (GET_CODE (addr) == CONST && GET_CODE (XEXP (addr, 0)) == PLUS)
+    addr = XEXP (XEXP (addr, 0), 0);
+  if (GET_CODE (addr) == SYMBOL_REF || GET_CODE (addr) == LABEL_REF)
+    return addr;
+  return NULL_RTX;
+}
+
+/* Whether X may read or write the cog variable M.  Hub memory is a separate
+   memory, so only cog memory references can; of those, a different symbol
+   is a different variable.  (reg_overlap_mentioned_p cannot be used here: it
+   treats any MEM as overlapping any other.)  */
+static bool
+propeller_cogvar_mentioned_p (rtx m, rtx x)
+{
+  rtx mbase = propeller_cogaddr_base (XEXP (m, 0));
+  subrtx_iterator::array_type array;
+
+  FOR_EACH_SUBRTX (iter, array, x, ALL)
+    {
+      const_rtx sub = *iter;
+      if (!MEM_P (sub) || !propeller_cogmem_p (const_cast<rtx> (sub)))
+	continue;
+      rtx base = propeller_cogaddr_base (XEXP (sub, 0));
+      if (!mbase || !base || rtx_equal_p (mbase, base))
+	return true;
+    }
+  return false;
+}
+
+/*
+ * Test whether
+ *
+ *     tmp = src
+ *     tmp = tmp <op1> b1
+ *    [tmp = tmp <op2> b2]
+ *     m = tmp                  (tmp dead after)
+ *
+ * can be done in the cog variable M itself,
+ *
+ *     m = src
+ *     m = m <op1> b1
+ *    [m = m <op2> b2]
+ *
+ * which saves the final mov.  TMP is a register; M must be a non-volatile
+ * cog variable (a volatile one, e.g. OUTA, must not see the intermediate
+ * values), and neither the operands of the ops nor the initial value may
+ * read M or, for the ops, TMP.  B2 is NULL for the one-op form.
+ */
+bool
+propeller_cogvar_rmw_ok (rtx tmp, rtx src, rtx m, rtx b1, rtx b2)
+{
+  if (!MEM_P (m) || MEM_VOLATILE_P (m) || !propeller_cogmem_p (m))
+    return false;
+  if (reg_overlap_mentioned_p (tmp, b1)
+      || propeller_cogvar_mentioned_p (m, b1)
+      || propeller_cogvar_mentioned_p (m, src))
+    return false;
+  if (b2 && (reg_overlap_mentioned_p (tmp, b2)
+	     || propeller_cogvar_mentioned_p (m, b2)))
+    return false;
+  /* The initial value is moved straight into cog memory, so it has to be
+     something a mov or rdlong can put there.  Outside XMM, *movsi offers a
+     cog destination exactly the sources it offers a register one; a memory
+     source is read once either way, so its volatility does not matter.  */
+  if (MEM_P (src))
+    return true;
+  return propeller_src_operand (src, SImode);
+}
+
+/*
+ * Whether an AND mask is better done with a pair of shifts in the hub
+ * memory models (see *andsi3_shiftmask): a run of low bits 2^n-1 or of high
+ * bits -2^n that "and #imm"/"andn #imm" cannot encode.  0xFFFF is left out:
+ * the zero-extend patterns do it in one long against the kernel's
+ * __MASK_0000FFFF.
+ */
+bool
+propeller_shiftmask_p (rtx op)
+{
+  unsigned HOST_WIDE_INT m;
+  int n;
+
+  if (!CONST_INT_P (op))
+    return false;
+  if (INTVAL (op) >= -512 && INTVAL (op) <= 511)
+    return false;
+  m = UINTVAL (op) & 0xffffffff;
+  if (m == 0xffff)
+    return false;
+  n = exact_log2 (m + 1);
+  if (n > 0 && n < 32)
+    return true;
+  n = exact_log2 ((~m + 1) & 0xffffffff);
+  return n > 0 && n < 32;
 }
 
 /*
@@ -1106,7 +1305,7 @@ propeller_print_operand (FILE * file, rtx op, int letter)
   else if (code == HIGH)
     output_addr_const (file, XEXP (op, 0));  
   else if (code == MEM)
-    output_address (XEXP (op, 0));
+    output_address (GET_MODE (op), XEXP (op, 0));
   else if (code == CONST_DOUBLE)
     {
       if ((CONST_DOUBLE_LOW (op) != 0) || (CONST_DOUBLE_HIGH (op) != 0))
@@ -1143,7 +1342,8 @@ propeller_print_operand (FILE * file, rtx op, int letter)
    into the `symbol_ref', and then check for it here.  */
 
 void
-propeller_print_operand_address (FILE * file, rtx addr)
+propeller_print_operand_address (FILE * file, machine_mode mode ATTRIBUTE_UNUSED,
+                                 rtx addr)
 {
   switch (GET_CODE (addr))
     {
@@ -1152,7 +1352,7 @@ propeller_print_operand_address (FILE * file, rtx addr)
       break;
 
     case MEM:
-      output_address (XEXP (addr, 0));
+      output_address (GET_MODE (addr), XEXP (addr, 0));
       break;
 
     case SYMBOL_REF:
@@ -1202,10 +1402,24 @@ propeller_modes_tieable_p (enum machine_mode A, enum machine_mode B)
  * check for legitimate addresses
  */
 bool
-propeller_legitimate_address_p (enum machine_mode mode, rtx addr, bool strict)
+propeller_legitimate_address_p (machine_mode mode, rtx addr, bool strict)
 {
     /* the only kinds of address the propeller 1 supports is register indirect
        and cog memory indirect */
+
+  /* A 64 bit access is broken into two 32 bit ones after reload.  The splitter
+     can handle a register address, which it steps by 4 to reach the high word,
+     and a direct cog address, whose two halves it names individually.  What it
+     cannot do is walk an address that itself lives in memory, so refuse cog
+     memory indirection for these modes; the address is then legitimised into a
+     register beforehand, and reload will not substitute a constant pool
+     indirection for it either.  */
+  if (known_gt (GET_MODE_SIZE (mode), (unsigned HOST_WIDE_INT) UNITS_PER_WORD))
+    {
+      if (REG_P (addr))
+	return INT_REG_OK_FOR_BASE_P (addr, strict);
+      return propeller_cogaddr_p (addr);
+    }
 
   if (REG_P (addr)) {
     return INT_REG_OK_FOR_BASE_P (addr, strict);
@@ -1254,8 +1468,12 @@ propeller_secondary_reload (bool in_p ATTRIBUTE_UNUSED, rtx x ATTRIBUTE_UNUSED,
    Speed-relative costs are relative to COSTS_N_INSNS, which is intended
    to represent cycles.  Size-relative costs are in words.  */
 static bool
-propeller_rtx_costs (rtx x, int code, int outer_code ATTRIBUTE_UNUSED, int opno ATTRIBUTE_UNUSED, int *total, bool speed)
+propeller_rtx_costs (rtx x, machine_mode mode ATTRIBUTE_UNUSED,
+                     int outer_code ATTRIBUTE_UNUSED,
+                     int opno ATTRIBUTE_UNUSED, int *total, bool speed)
 {
+    int code = GET_CODE (x);
+
     switch (code) {
     case REG:
     case SUBREG:
@@ -1306,6 +1524,8 @@ propeller_rtx_costs (rtx x, int code, int outer_code ATTRIBUTE_UNUSED, int opno 
     case MEM:
       if (TARGET_XMM)
 	*total += COSTS_N_INSNS(20); /* memory is hideously expensive in XMM mode */
+      else if (propeller_cogmem_p (x))
+	*total = 0;
       else
 	*total += COSTS_N_INSNS(4);  /* and moderately expensive in non-COG mdoes */
       break;
@@ -1393,29 +1613,29 @@ emit_add (rtx dest, rtx src0, rtx src1)
     (otherwise it is an extra parameter matching an ellipsis).  */
 
 static rtx
-propeller_function_arg (cumulative_args_t cum_v, enum machine_mode mode,
-                   const_tree type, bool named)
+propeller_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-  if (mode == VOIDmode)
+  if (arg.end_marker_p ())
     /* Compute operand 2 of the call insn.  */
     return GEN_INT (0);
 
-  if (targetm.calls.must_pass_in_stack (mode, type))
+  if (targetm.calls.must_pass_in_stack (arg))
     return NULL_RTX;
 
-  if (!named || (*cum + PROP_NUM_REGS (mode, type) > NUM_ARG_REGS))
+  if (!arg.named
+      || (*cum + PROP_NUM_REGS (arg.mode, arg.type) > NUM_ARG_REGS))
     return NULL_RTX;
 
-  return gen_rtx_REG (mode, *cum + PROP_R0);
+  return gen_rtx_REG (arg.mode, *cum + PROP_R0);
 }
 
 static void
-propeller_function_arg_advance (cumulative_args_t cum_v, enum machine_mode mode,
-                           const_tree type, bool named ATTRIBUTE_UNUSED)
+propeller_function_arg_advance (cumulative_args_t cum_v,
+                                const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-  *cum += PROP_NUM_REGS (mode, type);
+  *cum += PROP_NUM_REGS (arg.mode, arg.type);
 }
 
 /*
@@ -1594,6 +1814,22 @@ propeller_canonicalize_comparison (enum rtx_code code, rtx *op0, rtx *op1)
     }
        
   return code;
+}
+
+/* Emit a branch to LABEL taken when the C flag, set by ADDS or SUBS, says the
+   operation overflowed.  LTU on a CC_V value prints as IF_B, i.e. "carry set".  */
+
+void
+propeller_emit_overflow_branch (rtx label)
+{
+  rtx cc = gen_rtx_REG (CC_Vmode, PROP_CC_REGNUM);
+  rtx cond = gen_rtx_LTU (VOIDmode, cc, const0_rtx);
+
+  emit_jump_insn (gen_rtx_SET (pc_rtx,
+			       gen_rtx_IF_THEN_ELSE (VOIDmode, cond,
+						     gen_rtx_LABEL_REF (Pmode,
+									label),
+						     pc_rtx)));
 }
 
 /*
@@ -1901,11 +2137,7 @@ propeller_split_64bit_move (rtx dest, rtx src, enum machine_mode mode)
       destlo = gen_lowpart (SImode, dest);
       desthi = gen_highpart (SImode, dest);
       srcreg = XEXP (src, 0);
-      if (!REG_P (srcreg))
-	{
-	  print_rtl_single (stderr, src);
-	  gcc_assert (REG_P (srcreg));
-	}
+      gcc_assert (REG_P (srcreg)); /* must be simple indirection */
       srcindirect = gen_rtx_MEM (SImode, srcreg);
 
       if (true_regnum (srcreg) == true_regnum (destlo)) {
@@ -1946,14 +2178,13 @@ gen_propeller_store_vector (unsigned int low, unsigned int reg_count)
   vector = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (count));
 
   XVECEXP (vector, 0, 0) =
-    gen_rtx_SET (VOIDmode, stack_pointer_rtx,
+    gen_rtx_SET (stack_pointer_rtx,
                  gen_rtx_MINUS (SImode, stack_pointer_rtx,
                                 GEN_INT ((count - 1) * UNITS_PER_WORD)));
 
   for (i = 0; i < count - 1; i++)
     XVECEXP (vector, 0, i + 1) =
-      gen_rtx_SET (VOIDmode,
-                   gen_rtx_MEM (SImode,
+      gen_rtx_SET (gen_rtx_MEM (SImode,
                                 gen_rtx_MINUS (SImode, stack_pointer_rtx,
                                                GEN_INT ((i + 1) * UNITS_PER_WORD))),
                    gen_rtx_REG (SImode, low + i));
@@ -1973,14 +2204,13 @@ gen_propeller_popm_vector (unsigned int high, unsigned int reg_count)
   vector = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (count));
 
   XVECEXP (vector, 0, 0) =
-    gen_rtx_SET (VOIDmode, stack_pointer_rtx,
+    gen_rtx_SET (stack_pointer_rtx,
                  plus_constant (Pmode, stack_pointer_rtx,
                                 (count - 1) * UNITS_PER_WORD));
 
   for (i = 0; i < count - 1; i++)
     XVECEXP (vector, 0, i + 1) =
-      gen_rtx_SET (VOIDmode,
-                   gen_rtx_REG (SImode, high - i),
+      gen_rtx_SET (gen_rtx_REG (SImode, high - i),
                    gen_rtx_MEM (SImode,
                                 i == 0 ? stack_pointer_rtx
                                 : plus_constant (Pmode, stack_pointer_rtx,
@@ -2255,6 +2485,23 @@ propeller_expand_prologue (void)
 
   propeller_compute_frame_info ();
 
+  /* Cog code very often runs with no stack.  An overlay copied into a cog
+     starts executing at cog address 0 with sp holding whatever the image put
+     there, or whatever crt0_cog copied out of PAR - which in a driver is
+     usually a pointer to shared data, not a stack.  A frame then writes
+     through it and corrupts something else entirely, with no other symptom.
+     GCC 6 happened to keep these functions frameless; this compiler's
+     allocator is readier to spend a callee-saved register, so say something
+     rather than let it pass silently.  */
+  if (warn_cog_stack
+      && !TARGET_LMM && !TARGET_XMM
+      && cfun->machine->frame.total_size > 0)
+    warning (OPT_Wcog_stack,
+	     "%qD needs a %wd byte stack frame, but cog code has no stack "
+	     "unless sp is set up for it",
+	     current_function_decl,
+	     (HOST_WIDE_INT) cfun->machine->frame.total_size);
+
   if (cfun->machine->frame.total_size > 0)
     {
       /* Save callee save registers.  */
@@ -2306,12 +2553,38 @@ propeller_expand_epilogue (bool is_sibcall)
   if (is_naked_function (current_function_decl))
   {
       gcc_assert(! is_sibcall);
-      /* Naked functions use their own, programmer provided epilogues.
-         But, in order to keep gcc happy we have to generate some kind of
-         epilogue RTL.  */
-      emit_jump_insn (gen_naked_return ());
-      return;
 
+      /* A naked function gets no frame set-up or tear-down - that is the
+         point of the attribute on this target, where cog code often has no
+         stack at all - but it still gets a return.
+
+         GCC 6 emitted one for every non-native naked function, though not
+         through this path: propeller_can_use_return() reported that a
+         frameless function with lr dead could use a plain return insn, so
+         the middle end emitted one and never called the epilogue expander.
+         Current GCC knows about "naked" and suppresses that, which leaves
+         the function with no return at all.  The propgcc cog drivers depend
+         on the old behaviour:
+         they mark ordinary C functions _NAKED purely to suppress the frame,
+         and have no way to return otherwise.  Leaving the return out makes
+         such a function fall through into whatever the assembler placed
+         next, which is silent and very hard to diagnose.  A hand written
+         naked function that already ends in its own return simply gets one
+         unreachable instruction after it.  */
+      if (is_native_function (current_function_decl))
+        {
+          /* A native return is a named "<func>_ret" label, and a hand
+             written native naked function normally defines that label
+             itself; emitting a second one is a duplicate symbol error.
+             GCC 6 reached this case through the epilogue expander too and
+             emitted nothing, so keep the placeholder here.  */
+          emit_jump_insn (gen_naked_return ());
+        }
+      else if (TARGET_LMM)
+        emit_jump_insn (gen_return_lmm (lr_rtx));
+      else
+        emit_jump_insn (gen_return_cog (lr_rtx));
+      return;
   }
   propeller_compute_frame_info ();
 
@@ -3597,10 +3870,11 @@ fcache_convert_block (rtx_insn* first, rtx_insn* last, bool func_p)
                  but now we need it to go to the end of the
                  fcache section
               */
-              rtx const_label;
+              rtx_code_label *const_label;
+              rtx const_label_ref;
               rtx const_insn;
-              rtx mov_insn = insn;
-              enum machine_mode mode;
+              rtx_insn *mov_insn = insn;
+              machine_mode mode;
 
               const_label = gen_label_rtx ();
               LABEL_NUSES (const_label)++;
@@ -3608,7 +3882,7 @@ fcache_convert_block (rtx_insn* first, rtx_insn* last, bool func_p)
 
               last = emit_label_after (const_label, last);
               INSN_ADDRESSES_NEW (last, -1);
-              const_label = gen_rtx_LABEL_REF (SImode, const_label);
+              const_label_ref = gen_rtx_LABEL_REF (SImode, const_label);
               mode = GET_MODE (SET_DEST (pattern));
               /* now the actual word */
               const_insn = gen_fcache_const_word (SET_SRC (pattern));
@@ -3617,7 +3891,7 @@ fcache_convert_block (rtx_insn* first, rtx_insn* last, bool func_p)
 
               /* finally, modify the existing move instruction */
               /* update the pattern */
-              SET_SRC (pattern) = gen_rtx_UNSPEC (mode, gen_rtvec (2, const_label, start_label_ref), UNSPEC_FCACHE_LABEL_REF);
+              SET_SRC (pattern) = gen_rtx_UNSPEC (mode, gen_rtvec (2, const_label_ref, start_label_ref), UNSPEC_FCACHE_LABEL_REF);
               emit_insn_before (pattern, mov_insn);
               /* delete the old one */
               delete_insn (mov_insn);
@@ -3856,11 +4130,154 @@ propeller_reg_dead_peep (const rtx_insn* first, rtx reg)
  * optimizations
  */
 
+/*
+ * -Wcog-stack, second half.  The prologue reports a function that allocates
+ * a frame, but a stack can be used without one: a naked function gets no
+ * prologue at all, yet reload still gives it spill slots addressed through
+ * sp.  In a cog driver sp usually holds PAR, so such a spill silently
+ * overwrites the start of the driver's parameter block.  Look at what was
+ * actually emitted and report any remaining sp reference.
+ */
+static void
+propeller_check_cog_stack (void)
+{
+  rtx_insn *insn;
+  rtx hardfp = gen_rtx_REG (Pmode, PROP_FP_REGNUM);
+  bool naked = is_naked_function (current_function_decl);
+
+  if (!warn_cog_stack || TARGET_LMM || TARGET_XMM)
+    return;
+
+  /* A function with a frame has already been reported by the prologue.  */
+  if (!naked && cfun->machine->frame.total_size > 0)
+    return;
+
+  for (insn = get_insns (); insn; insn = NEXT_INSN (insn))
+    {
+      if (!NONDEBUG_INSN_P (insn))
+	continue;
+      if (!reg_mentioned_p (stack_pointer_rtx, PATTERN (insn))
+	  && !(frame_pointer_needed
+	       && reg_mentioned_p (hardfp, PATTERN (insn))))
+	continue;
+
+      if (naked && get_frame_size () > 0)
+	warning (OPT_Wcog_stack,
+		 "%qD spills %wd bytes to the stack, but a naked function has "
+		 "no frame and cog code has no stack unless sp is set up for it",
+		 current_function_decl, (HOST_WIDE_INT) get_frame_size ());
+      else
+	warning (OPT_Wcog_stack,
+		 "%qD uses the stack pointer, but cog code has no stack "
+		 "unless sp is set up for it", current_function_decl);
+      return;
+    }
+}
+
+/* Whether the flags are dead after INSN.  Scan forward along the
+   fall-through path: a read means live, an unconditional write means dead,
+   leaving the function means dead.  Anything whose successors cannot be
+   followed from here (a branch, a call) is taken as live.  */
+static bool
+propeller_cc_dead_after_p (rtx_insn *insn)
+{
+  rtx cc = gen_rtx_REG (CCmode, CC_REG);
+  rtx_insn *i;
+
+  for (i = NEXT_INSN (insn); i; i = NEXT_INSN (i))
+    {
+      if (!NONDEBUG_INSN_P (i))
+	continue;		/* labels and notes do not change liveness */
+      if (reg_referenced_p (cc, PATTERN (i)))
+	return false;
+      if (JUMP_P (i))
+	return returnjump_p (i);
+      if (CALL_P (i))
+	return false;
+      if (GET_CODE (PATTERN (i)) != COND_EXEC && reg_set_p (cc, i))
+	return true;
+    }
+  return true;
+}
+
+/* Turn a compare and a predicated mov that clamp a value into one
+   MIN/MAX/MINS/MAXS; see propeller_cond_move_to_minmax.  This has to run
+   after post-reload if-conversion, which is what creates the cond_exec, so
+   it cannot be a peephole2.  */
+static void
+propeller_cond_moves_to_minmax (void)
+{
+  rtx_insn *insn, *next;
+
+  for (insn = get_insns (); insn; insn = next)
+    {
+      rtx ops[7], set, ce_pat, test, mv;
+      rtx_insn *ce, *n;
+
+      next = NEXT_INSN (insn);
+      if (!NONJUMP_INSN_P (insn))
+	continue;
+      set = PATTERN (insn);
+      if (GET_CODE (set) != SET
+	  || !REG_P (SET_DEST (set)) || REGNO (SET_DEST (set)) != CC_REG
+	  || GET_CODE (SET_SRC (set)) != COMPARE)
+	continue;
+
+      ce = next_nonnote_nondebug_insn (insn);
+      if (!ce || !NONJUMP_INSN_P (ce) || GET_CODE (PATTERN (ce)) != COND_EXEC)
+	continue;
+      ce_pat = PATTERN (ce);
+      test = COND_EXEC_TEST (ce_pat);
+      mv = COND_EXEC_CODE (ce_pat);
+      if (GET_CODE (mv) != SET || GET_MODE (SET_DEST (mv)) != SImode
+	  || !REG_P (XEXP (test, 0)) || REGNO (XEXP (test, 0)) != CC_REG
+	  || XEXP (test, 1) != const0_rtx)
+	continue;
+
+      ops[0] = SET_DEST (set);
+      ops[1] = XEXP (SET_SRC (set), 0);
+      ops[2] = XEXP (SET_SRC (set), 1);
+      ops[3] = test;
+      ops[4] = SET_DEST (mv);
+      ops[5] = SET_SRC (mv);
+      if (!propeller_src_operand (ops[1], SImode)
+	  || !propeller_src_operand (ops[2], SImode)
+	  || !propeller_dst_operand (ops[4], SImode)
+	  || !propeller_src_operand (ops[5], SImode))
+	continue;
+      if (!propeller_cond_move_to_minmax (ops) || !propeller_cc_dead_after_p (ce))
+	continue;
+
+      n = emit_insn_after (gen_rtx_SET (copy_rtx (ops[4]), ops[6]), ce);
+      if (recog_memoized (n) < 0)
+	{
+	  delete_insn (n);
+	  continue;
+	}
+      extract_insn (n);
+      if (!constrain_operands (1, get_preferred_alternatives (n)))
+	{
+	  delete_insn (n);
+	  continue;
+	}
+      if (dump_file)
+	fprintf (dump_file, " *** insns %d,%d -> min/max insn %d\n",
+		 INSN_UID (insn), INSN_UID (ce), INSN_UID (n));
+      delete_insn (insn);
+      delete_insn (ce);
+      next = NEXT_INSN (n);
+    }
+}
+
 static void
 propeller_reorg(void)
 {
   bool done = 0;
   bool fcache_func = is_fcache_function (current_function_decl);
+
+  propeller_check_cog_stack ();
+  if (optimize)
+    propeller_cond_moves_to_minmax ();
 
   /* handle FCACHE */
   if (TARGET_LMM && (do_fcache || fcache_func))
@@ -3987,6 +4404,200 @@ propeller_lra_p (void)
 
 #undef TARGET_LRA_P
 #define TARGET_LRA_P propeller_lra_p
+
+
+/* Implement TARGET_HARD_REGNO_NREGS.  */
+
+static unsigned int
+propeller_hard_regno_nregs (unsigned int regno ATTRIBUTE_UNUSED,
+			    machine_mode mode)
+{
+  return ((GET_MODE_SIZE (mode) + UNITS_PER_WORD - 1) / UNITS_PER_WORD);
+}
+
+/* Implement TARGET_HARD_REGNO_MODE_OK.  */
+
+static bool
+propeller_hard_regno_mode_ok_hook (unsigned int regno, machine_mode mode)
+{
+  return propeller_hard_regno_mode_ok (regno, mode);
+}
+
+/* Implement TARGET_MODES_TIEABLE_P.  */
+
+static bool
+propeller_modes_tieable_p_hook (machine_mode mode1, machine_mode mode2)
+{
+  return propeller_modes_tieable_p (mode1, mode2);
+}
+
+/* Implement TARGET_CONSTANT_ALIGNMENT.  Make strings word-aligned so
+   that strcpy from constants will be faster.  */
+
+static HOST_WIDE_INT
+propeller_constant_alignment (const_tree exp, HOST_WIDE_INT align)
+{
+  if (TREE_CODE (exp) == STRING_CST && align < BITS_PER_WORD)
+    return BITS_PER_WORD;
+  return align;
+}
+
+/* Implement TARGET_SLOW_UNALIGNED_ACCESS.  Unaligned accesses always
+   have to be synthesised on the Propeller, so they are never cheap.  */
+
+static bool
+propeller_slow_unaligned_access (machine_mode mode ATTRIBUTE_UNUSED,
+				 unsigned int align ATTRIBUTE_UNUSED)
+{
+  return true;
+}
+
+/* Implement TARGET_TRULY_NOOP_TRUNCATION.  Truncating an integer to a
+   narrower mode is free, since all registers are word sized.  */
+
+static bool
+propeller_truly_noop_truncation (poly_uint64 outprec ATTRIBUTE_UNUSED,
+				 poly_uint64 inprec ATTRIBUTE_UNUSED)
+{
+  return true;
+}
+
+/* Implement TARGET_FUNCTION_ARG_PADDING.  Arguments are padded upward.  */
+
+static pad_direction
+propeller_function_arg_padding (machine_mode mode ATTRIBUTE_UNUSED,
+				const_tree type ATTRIBUTE_UNUSED)
+{
+  return PAD_UPWARD;
+}
+
+/* Implement TARGET_STARTING_FRAME_OFFSET.  */
+
+static HOST_WIDE_INT
+propeller_starting_frame_offset (void)
+{
+  return UNITS_PER_WORD;
+}
+
+/* Implement TARGET_C_MODE_FOR_FLOATING_TYPE.  float is always 32 bits and
+   long double is always 64 bits; double follows -m32bit-doubles /
+   -m64bit-doubles.  */
+
+static machine_mode
+propeller_c_mode_for_floating_type (enum tree_index ti)
+{
+  if (ti == TI_DOUBLE_TYPE)
+    return TARGET_64BIT_DOUBLES ? DFmode : SFmode;
+  if (ti == TI_LONG_DOUBLE_TYPE)
+    return DFmode;
+  return default_mode_for_floating_type (ti);
+}
+
+#undef TARGET_HARD_REGNO_NREGS
+#define TARGET_HARD_REGNO_NREGS propeller_hard_regno_nregs
+
+#undef TARGET_HARD_REGNO_MODE_OK
+#define TARGET_HARD_REGNO_MODE_OK propeller_hard_regno_mode_ok_hook
+
+#undef TARGET_MODES_TIEABLE_P
+#define TARGET_MODES_TIEABLE_P propeller_modes_tieable_p_hook
+
+#undef TARGET_CONSTANT_ALIGNMENT
+#define TARGET_CONSTANT_ALIGNMENT propeller_constant_alignment
+
+#undef TARGET_SLOW_UNALIGNED_ACCESS
+#define TARGET_SLOW_UNALIGNED_ACCESS propeller_slow_unaligned_access
+
+#undef TARGET_TRULY_NOOP_TRUNCATION
+#define TARGET_TRULY_NOOP_TRUNCATION propeller_truly_noop_truncation
+
+#undef TARGET_FUNCTION_ARG_PADDING
+#define TARGET_FUNCTION_ARG_PADDING propeller_function_arg_padding
+
+#undef TARGET_STARTING_FRAME_OFFSET
+#define TARGET_STARTING_FRAME_OFFSET propeller_starting_frame_offset
+
+#undef TARGET_C_MODE_FOR_FLOATING_TYPE
+#define TARGET_C_MODE_FOR_FLOATING_TYPE propeller_c_mode_for_floating_type
+
+/* Implement TARGET_LEGITIMATE_ADDRESS_P.  The CH argument describing the
+   use context is not needed by this target.  */
+
+static bool
+propeller_legitimate_address_p_hook (machine_mode mode, rtx addr, bool strict,
+				     code_helper ch ATTRIBUTE_UNUSED)
+{
+  return propeller_legitimate_address_p (mode, addr, strict);
+}
+
+#undef TARGET_LEGITIMATE_ADDRESS_P
+#define TARGET_LEGITIMATE_ADDRESS_P propeller_legitimate_address_p_hook
+
+/* Count the volatile MEMs inside X.  */
+
+static int
+propeller_count_volatile_mems (rtx x)
+{
+  int count = 0;
+  subrtx_iterator::array_type array;
+
+  FOR_EACH_SUBRTX (iter, array, x, ALL)
+    if (MEM_P (*iter) && MEM_VOLATILE_P (*iter))
+      count++;
+
+  return count;
+}
+
+/* Implement TARGET_LEGITIMATE_COMBINED_INSN.
+
+   The cog special registers (CNT, INA, OUTA, PHSA, ...) are ordinary cog
+   memory locations, so a volatile access to one of them is a MEM which the
+   operand predicates accept in either operand position of a two-operand ALU
+   insn.  Combine can therefore fold two *separate* volatile reads into one
+   insn, for example turning
+
+	t   = CNT;
+	res = CNT - t;
+
+   into
+
+	(set (reg) (minus (mem/v "CNT") (mem/v "CNT"))) .
+
+   RTL does not fix an evaluation order inside an expression, and the
+   Propeller can keep only one of the two operands in memory, so reload has
+   to reload the other one -- and it may well emit the two volatile reads in
+   the opposite order from the one the program asked for, silently computing
+   the negated difference.  Refuse any combined insn that would perform more
+   than one volatile read, so that separate volatile accesses stay in
+   separate insns and keep their program order.
+
+   A read-modify-write of a single location, such as "DIRA |= mask" giving
+   (set (mem/v "DIRA") (ior (mem/v "DIRA") (reg))), still has just one
+   volatile MEM in the source and remains allowed.  */
+
+static bool
+propeller_legitimate_combined_insn (rtx_insn *insn)
+{
+  rtx pat = PATTERN (insn);
+
+  if (GET_CODE (pat) == SET)
+    return propeller_count_volatile_mems (SET_SRC (pat)) <= 1;
+
+  if (GET_CODE (pat) == PARALLEL)
+    for (int i = 0; i < XVECLEN (pat, 0); i++)
+      {
+	rtx x = XVECEXP (pat, 0, i);
+
+	if (GET_CODE (x) == SET
+	    && propeller_count_volatile_mems (SET_SRC (x)) > 1)
+	  return false;
+      }
+
+  return true;
+}
+
+#undef TARGET_LEGITIMATE_COMBINED_INSN
+#define TARGET_LEGITIMATE_COMBINED_INSN propeller_legitimate_combined_insn
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

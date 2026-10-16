@@ -52,6 +52,42 @@
   }                                             \
 "
 
+/* propgcc builds a cog image with "gcc -mcog -r -o x.cog x.c": a relocatable
+   object that is nevertheless a complete, self contained program, copied
+   into a cog and started at cog address 0.  It therefore needs crt0_cog and
+   the default libraries, exactly as a normal link would.
+
+   GCC 6 linked the start files for any -r link, because its LINK_COMMAND_SPEC
+   read "%{!nostdlib:%{!nostartfiles:%S}}".  Current GCC guards all three of
+   the start file, default library and end file clauses with %{!r:...}, which
+   is right for an ordinary partial link but leaves a cog image with no start
+   code at all - it begins with whatever literal pool the compiler emitted,
+   and the loader jumps straight into data.
+
+   Restore the old behaviour for -mcog only, by relaxing those three guards
+   from "not -r" to "not -r, or -mcog".  An ordinary partial link of
+   hub code keeps the modern behaviour.  */
+
+#undef LINK_COMMAND_SPEC
+#define LINK_COMMAND_SPEC "\
+%{!fsyntax-only:%{!c:%{!M:%{!MM:%{!E:%{!S:\
+    %(linker) " \
+    LINK_PLUGIN_SPEC \
+   "%{flto|flto=*:%<fcompare-debug*} \
+    %{flto} %{fno-lto} %{flto=*} %l " LINK_PIE_SPEC \
+   "%{fuse-ld=*:-fuse-ld=%*} " LINK_COMPRESS_DEBUG_SPEC \
+   "%X %{o*} %{e*} %{N} %{n} %{r}\
+    %{s} %{t} %{u*} %{z} %{Z} %{!nostdlib:%{!r|mcog:%{!nostartfiles:%S}}} \
+    %{static|no-pie|static-pie:} %@{L*} %(link_libgcc) " \
+    VTABLE_VERIFICATION_SPEC " " SANITIZER_EARLY_SPEC " %o "" \
+    %{fopenacc|fopenmp|%:gt(%{ftree-parallelize-loops=*:%*} 1):\
+	%:include(libgomp.spec)%(link_gomp)}\
+    %{fgnu-tm:%:include(libitm.spec)%(link_itm)}\
+    " STACK_SPLIT_SPEC "\
+    %{fprofile-arcs|fcondition-coverage|fpath-coverage|fprofile-generate*|coverage:-lgcov} " SANITIZER_SPEC " \
+    %{!nostdlib:%{!r|mcog:%{!nodefaultlibs:%(link_ssp) %(link_gcc_c_sequence)}}}\
+    %{!nostdlib:%{!r|mcog:%{!nostartfiles:%E}}} %{T*}  \n%(post_link) }}}}}}"
+
 #undef LINK_SPEC
 #define LINK_SPEC "                                             \
 %{mrelax:-relax}                                                \
@@ -130,10 +166,8 @@ do {                                                    \
 
 #define TARGET_FLOAT_FORMAT IEEE_FLOAT_FORMAT
 
-/* Make strings word-aligned so strcpy from constants will be faster.  */
-#define CONSTANT_ALIGNMENT(EXP, ALIGN)  \
-  (TREE_CODE (EXP) == STRING_CST        \
-   && (ALIGN) < BITS_PER_WORD ? BITS_PER_WORD : (ALIGN))
+/* Make strings word-aligned so strcpy from constants will be faster.
+   Implemented by TARGET_CONSTANT_ALIGNMENT in propeller.cc.  */
 
 /* Make arrays and structures word-aligned to allow faster copying etc.  */
 #define DATA_ALIGNMENT(TYPE, ALIGN)                                     \
@@ -152,11 +186,11 @@ do {                                                    \
 /* Nonzero if access to memory by bytes is slow and undesirable.  */
 #define SLOW_BYTE_ACCESS 0
 
-#define SLOW_UNALIGNED_ACCESS(MODE, ALIGN) 1
+/* Unaligned access is slow; see TARGET_SLOW_UNALIGNED_ACCESS.  */
 
 /* Define if operations between registers always perform the operation
    on the full register even if a narrower mode is specified.  */
-#define WORD_REGISTER_OPERATIONS
+#define WORD_REGISTER_OPERATIONS 1
 
 /* Try to generate sequences that don't involve branches, we can then use
    conditional instructions */
@@ -183,10 +217,10 @@ do {                                                    \
 #define LONG_TYPE_SIZE              32
 #define LONG_LONG_TYPE_SIZE         64
 
-/* size of C floating point types */
-#define FLOAT_TYPE_SIZE             32
-#define DOUBLE_TYPE_SIZE            (TARGET_64BIT_DOUBLES ? 64 : 32)
-#define LONG_DOUBLE_TYPE_SIZE       64
+/* Size of the C floating point types is selected by
+   TARGET_C_MODE_FOR_FLOATING_TYPE in propeller.cc:
+   float is 32 bits, long double is 64 bits, and double is
+   64 bits when -m64bit-doubles is in effect and 32 bits otherwise.  */
 
 #define DEFAULT_SIGNED_CHAR         0
 
@@ -405,20 +439,17 @@ extern enum reg_class propeller_reg_class[FIRST_PSEUDO_REGISTER];
 
 /* A C expression for the number of consecutive hard registers,
    starting at register number REGNO, required to hold a value of mode
-   MODE.  */
-#define HARD_REGNO_NREGS(REGNO, MODE)                      \
-  ((GET_MODE_SIZE (MODE) + UNITS_PER_WORD - 1)             \
-   / UNITS_PER_WORD)
+   MODE.  Implemented by TARGET_HARD_REGNO_NREGS in propeller.cc.  */
 
 /* A C expression that is nonzero if it is permissible to store a
    value of mode MODE in hard register number REGNO (or in several
    registers starting with that one).  All gstore registers are 
-   equivalent, so we can set this to 1.  */
-#define HARD_REGNO_MODE_OK(REGNO,MODE) propeller_hard_regno_mode_ok ((REGNO), (MODE))
+   equivalent, so we can set this to 1.
+   Implemented by TARGET_HARD_REGNO_MODE_OK in propeller.cc.  */
 
 /* A C expression that is nonzero if a value of mode MODE1 is
-   accessible in mode MODE2 without copying.  */
-#define MODES_TIEABLE_P(MODE1, MODE2) propeller_modes_tieable_p ((MODE1), (MODE2))
+   accessible in mode MODE2 without copying.
+   Implemented by TARGET_MODES_TIEABLE_P in propeller.cc.  */
 
 /* A C expression for the maximum number of consecutive registers of
    class CLASS needed to hold a value of mode MODE.  */
@@ -429,7 +460,8 @@ extern enum reg_class propeller_reg_class[FIRST_PSEUDO_REGISTER];
    quickly between memory and registers or between two memory
    locations.  */
 #define MOVE_MAX 4
-#define TRULY_NOOP_TRUNCATION(op,ip) 1
+/* Truncation between integer modes is a no-op; see
+   TARGET_TRULY_NOOP_TRUNCATION in propeller.cc.  */
 
 /* It's faster to call directly than from registers */
 #define NO_FUNCTION_CSE 1
@@ -465,8 +497,9 @@ extern enum reg_class propeller_reg_class[FIRST_PSEUDO_REGISTER];
    argument of `FUNCTION_ARG' and other related values.  */
 typedef unsigned int CUMULATIVE_ARGS;
 
-#define FUNCTION_ARG_PADDING(MODE, TYPE) upward
-#define BLOCK_REG_PADDING(MODE, TYPE, FIRST) upward
+/* Arguments are padded upward; see TARGET_FUNCTION_ARG_PADDING
+   in propeller.cc.  */
+#define BLOCK_REG_PADDING(MODE, TYPE, FIRST) PAD_UPWARD
 
 /* If defined, the maximum amount of space required for outgoing arguments
    will be computed and placed into the variable
@@ -487,13 +520,12 @@ typedef unsigned int CUMULATIVE_ARGS;
 
 /* Define this macro if pushing a word onto the stack moves the stack
    pointer to a smaller address.  */
-#define STACK_GROWS_DOWNWARD
+#define STACK_GROWS_DOWNWARD 1
 
 #define INITIAL_FRAME_POINTER_OFFSET(DEPTH) (DEPTH) = 0
 
 /* Offset from the frame pointer to the first local variable slot to
-   be allocated.  */
-#define STARTING_FRAME_OFFSET (UNITS_PER_WORD)
+   be allocated; see TARGET_STARTING_FRAME_OFFSET in propeller.cc.  */
 
 /* Offset from the stack pointer register to the first location at which
    outgoing arguments are placed */

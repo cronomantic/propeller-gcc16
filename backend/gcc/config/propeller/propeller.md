@@ -229,6 +229,12 @@
 (define_code_attr muxccmode [(ne "CC_Z") (eq "CC_Z") (lt "CC") (ltu "CC_C")
                              (ge "CC") (geu "CC_C")])
 
+(define_code_iterator eqne [eq ne])
+;; tjz jumps when the value is zero, tjnz when it is not
+(define_code_attr tjsuffix  [(eq "z")  (ne "nz")])
+;; ... and the reversed sense, for when the label is on the fall-through arm
+(define_code_attr tjrsuffix [(eq "nz") (ne "z")])
+
 (define_code_iterator ltugeu [ltu geu])
 
 ;; types of condition codes we can branch on
@@ -363,6 +369,71 @@
 ;; sometimes we want to set the carry flag; this essentially
 ;; means comparing the output with the inputs (if (x+y)<y or (x+y)<x
 ;; then there was carry)
+
+;; -------------------------------------------------------------------------
+;; Signed overflow: ADDS / SUBS
+;;
+;; ADDS and SUBS compute exactly what ADD and SUB do, but put *signed
+;; overflow* in C instead of the unsigned carry/borrow.  That turns the
+;; __builtin_{add,sub}_overflow checks (and -ftrapv) from a six instruction
+;; xor/xor/andn/cmps dance into one instruction plus a branch.
+;;
+;; The overflow condition is written the canonical way: the wide sum of the
+;; sign extended operands differs from the sign extension of the narrow sum
+;; exactly when the addition overflowed.
+;; -------------------------------------------------------------------------
+
+(define_insn "addsi3_compareV"
+  [(set (reg:CC_V CC_REG)
+	(compare:CC_V
+	  (plus:DI (sign_extend:DI (match_operand:SI 1 "propeller_dst_operand" "%0"))
+		   (sign_extend:DI (match_operand:SI 2 "propeller_src_operand" "rCI")))
+	  (sign_extend:DI (plus:SI (match_dup 1) (match_dup 2)))))
+   (set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(plus:SI (match_dup 1) (match_dup 2)))]
+  ""
+  "adds\t%0, %2 wc"
+  [(set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
+(define_insn "subsi3_compareV"
+  [(set (reg:CC_V CC_REG)
+	(compare:CC_V
+	  (minus:DI (sign_extend:DI (match_operand:SI 1 "propeller_dst_operand" "0"))
+		    (sign_extend:DI (match_operand:SI 2 "propeller_src_operand" "rCI")))
+	  (sign_extend:DI (minus:SI (match_dup 1) (match_dup 2)))))
+   (set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(minus:SI (match_dup 1) (match_dup 2)))]
+  ""
+  "subs\t%0, %2 wc"
+  [(set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
+(define_expand "addvsi4"
+  [(match_operand:SI 0 "propeller_dst_operand")
+   (match_operand:SI 1 "propeller_dst_operand")
+   (match_operand:SI 2 "propeller_src_operand")
+   (label_ref (match_operand 3 "" ""))]
+  ""
+{
+  emit_insn (gen_addsi3_compareV (operands[0], operands[1], operands[2]));
+  propeller_emit_overflow_branch (operands[3]);
+  DONE;
+})
+
+(define_expand "subvsi4"
+  [(match_operand:SI 0 "propeller_dst_operand")
+   (match_operand:SI 1 "propeller_dst_operand")
+   (match_operand:SI 2 "propeller_src_operand")
+   (label_ref (match_operand 3 "" ""))]
+  ""
+{
+  emit_insn (gen_subsi3_compareV (operands[0], operands[1], operands[2]));
+  propeller_emit_overflow_branch (operands[3]);
+  DONE;
+})
 
 (define_insn "*addsi3_set_carry1"
   [(set (reg:CC_C CC_REG)
@@ -722,6 +793,24 @@
    (set_attr "predicable" "yes")]
 )
 
+;; For both "neg" and "abs" the result is zero exactly when the source is,
+;; so a test of the source folds into the instruction itself.  The middle end
+;; canonicalises "(- x) != 0" into "x != 0", which is what this matches.
+(define_insn "*<oneop:code>si2_compare0_src"
+  [
+    (set (reg:CC_Z CC_REG)
+         (compare:CC_Z
+	    (match_operand:SI 1 "propeller_src_operand" "rCI")
+	    (const_int 0)))
+    (set (match_operand:SI         0 "propeller_dst_operand" "=rC")
+	     (oneop:SI (match_dup 1)))
+  ]
+  ""
+  "<opcode>\t%0, %1 wz"
+  [(set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
 (define_insn "*<oneop:code>si2_compare0"
   [
     (set (reg:CC_Z CC_REG)
@@ -781,7 +870,65 @@
   [(set_attr "predicable" "yes")]
 )
 
-(define_insn "andsi3"
+;; "andn" sets Z from its result too, so a following test for zero is
+;; redundant.
+(define_insn "*andnotsi3_compare0"
+  [(set (reg:CC_Z CC_REG)
+        (compare:CC_Z
+	  (and:SI (not:SI (match_operand:SI 1 "propeller_src_operand" " rCI"))
+		  (match_operand:SI         2 "propeller_dst_operand" " 0"))
+	  (const_int 0)))
+   (set (match_operand:SI                 0 "propeller_dst_operand" "=rC")
+	(and:SI (not:SI (match_dup 1)) (match_dup 2)))]
+  ""
+  "andn\t%0, %1 wz"
+  [(set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
+(define_insn "*andnotsi3_compare0_only"
+  [(set (reg:CC_Z CC_REG)
+        (compare:CC_Z
+	  (and:SI (not:SI (match_operand:SI 1 "propeller_src_operand" " rCI"))
+		  (match_operand:SI         0 "propeller_dst_operand" " rC"))
+	  (const_int 0)))]
+  ""
+  "andn\t%0, %1 wz,nr"
+  [(set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
+;; In cog mode legitimate_constant_p stops at -511, because -512 cannot be
+;; loaded into a register in one instruction, so propeller_and_operand turns
+;; 0xFFFFFE00 away and it would go to the constant pool - although it is
+;; exactly "andn #511".  It cannot simply be accepted as an operand: reload
+;; may then pick the register alternative and try to move -512 into a
+;; register, which nothing can do.  So it gets an insn of its own with the
+;; constant written into the pattern, where reload never sees an operand to
+;; move, and the expander routes it there.
+(define_expand "andsi3"
+  [(set (match_operand:SI         0 "propeller_dst_operand" "")
+	(and:SI (match_operand:SI 1 "propeller_dst_operand" "")
+		(match_operand:SI 2 "general_operand" "")))]
+  ""
+{
+  if (CONST_INT_P (operands[2])
+      && (INTVAL (operands[2]) & 0xffffffff) == 0xfffffe00)
+    operands[2] = GEN_INT (-512);
+  else if (!propeller_and_operand (operands[2], SImode))
+    operands[2] = force_reg (SImode, operands[2]);
+})
+
+(define_insn "*andsi3_notmask511"
+  [(set (match_operand:SI         0 "propeller_dst_operand" "=rC")
+	(and:SI (match_operand:SI 1 "propeller_dst_operand" "0")
+		(const_int -512)))]
+  ""
+  "andn\t%0, #511"
+  [(set_attr "predicable" "yes")]
+)
+
+(define_insn "*andsi3"
   [(set (match_operand:SI         0 "propeller_dst_operand" "=rC,rC")
 	(and:SI (match_operand:SI 1 "propeller_dst_operand" "%0,0")
 		(match_operand:SI 2 "propeller_and_operand" " rCI,M")))]
@@ -791,6 +938,41 @@
    andn\t%0, %M2"
   [(set_attr "predicable" "yes")]
 )
+
+;; In the hub memory models a mask that fits neither "and #imm" nor
+;; "andn #imm" costs an mvi (two longs) and usually a copy as well.  When the
+;; mask is a run of low bits (2^n-1) or of high bits (-2^n), a pair of shifts
+;; does it in two longs with no constant at all.  Cog code keeps the pool
+;; constant: there "and r, .LC" plus its long is also two longs but one
+;; instruction, and the long can be shared.
+(define_insn_and_split "*andsi3_shiftmask"
+  [(set (match_operand:SI         0 "register_operand" "=r")
+	(and:SI (match_operand:SI 1 "register_operand" "0")
+		(match_operand:SI 2 "const_int_operand" "n")))]
+  "TARGET_LMM && propeller_shiftmask_p (operands[2])"
+  "#"
+  "&& 1"
+  [(const_int 0)]
+{
+  unsigned HOST_WIDE_INT m = UINTVAL (operands[2]) & 0xffffffff;
+  int low = exact_log2 (m + 1);			/* m = 2^low - 1 */
+  rtx dst = operands[0], src = operands[1];
+  rtx t = can_create_pseudo_p () ? gen_reg_rtx (SImode) : dst;
+
+  if (low > 0)
+    {
+      rtx k = GEN_INT (32 - low);
+      emit_insn (gen_rtx_SET (t, gen_rtx_ASHIFT (SImode, src, k)));
+      emit_insn (gen_rtx_SET (dst, gen_rtx_LSHIFTRT (SImode, t, k)));
+    }
+  else
+    {
+      rtx k = GEN_INT (exact_log2 ((~m + 1) & 0xffffffff));	/* m = -2^k */
+      emit_insn (gen_rtx_SET (t, gen_rtx_LSHIFTRT (SImode, src, k)));
+      emit_insn (gen_rtx_SET (dst, gen_rtx_ASHIFT (SImode, t, k)));
+    }
+  DONE;
+})
 
 ;; versions that check against 0
 (define_insn "*andsi3_compare0"
@@ -928,6 +1110,21 @@
   [(set_attr "predicable" "yes")]
 )
 
+;; "a ^ b" is zero exactly when a == b, and the middle end canonicalises
+;; "(a ^ b) == 0" to "a == b".  When the xor result is wanted as well, the
+;; xor itself can produce the flag.
+(define_insn "*xorsi3_compare_eq"
+  [(set (reg:CC_Z CC_REG)
+        (compare:CC_Z (match_operand:SI 1 "propeller_dst_operand" "%0")
+		      (match_operand:SI 2 "propeller_src_operand" "rCI")))
+   (set (match_operand:SI                0 "propeller_dst_operand" "=rC")
+        (xor:SI (match_dup 1) (match_dup 2)))]
+  ""
+  "xor\t%0, %2 wz"
+  [(set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
 (define_insn "*<orop:code>si3_compare0_only"
   [(set (reg:CC_Z CC_REG)
         (compare:CC_Z
@@ -1004,6 +1201,20 @@
 		     (match_operand:SI 2 "propeller_src_operand" "rCI")))]
   ""
   "ror\t%0, %2"
+  [(set_attr "predicable" "yes")]
+)
+
+;; The shift and rotate instructions use only bits 0-4 of the count, so a
+;; mask of the count that keeps those bits - the "n & 31" a portable rotate
+;; or a guarded shift has to write - is already done by the hardware.
+(define_insn "*<shiftop:code>si3_mask"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(shiftop:SI
+	  (match_operand:SI 1 "propeller_dst_operand" "0")
+	  (and:SI (match_operand:SI 2 "propeller_dst_operand" "rC")
+		  (match_operand:SI 3 "const_int_operand" "n"))))]
+  "(INTVAL (operands[3]) & 31) == 31"
+  "<opcode>\t%0, %2"
   [(set_attr "predicable" "yes")]
 )
 
@@ -1219,7 +1430,7 @@
 
 (define_insn "*movsi"
   [(set (match_operand:SI 0 "nonimmediate_operand"          "=rC,rC,rC,rC,m")
-	(match_operand:SI 1 "general_operand"               "rCI,B,N,m,rC"))]
+	(match_operand:SI 1 "general_operand"               "rCI,B,N,m,rD"))]
   "!TARGET_XMM"
   "@
    mov\t%0, %1
@@ -1255,6 +1466,36 @@
   [(set_attr "conds" "set")
    (set_attr "predicable" "yes")]
 )
+;; Hub loads set Z from the loaded value as well, so "if (*p)" needs no
+;; separate test.  propeller_src_operand deliberately excludes hub memory,
+;; hence the separate patterns; the condition keeps cog memory out, since a
+;; cog-memory reference is a plain "mov" and is handled just above.
+(define_insn "*movsi_hubload_compare0"
+  [(set (reg:CC_Z CC_REG)
+	(compare:CC_Z (match_operand:SI 1 "memory_operand" "h")
+		      (const_int 0)))
+   (set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(match_dup 1))]
+  "!TARGET_XMM && !propeller_cogmem_p (operands[1])"
+  "rdlong\t%0, %1 wz"
+  [(set_attr "type" "hub")
+   (set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
+(define_insn "*movsi_hubload_compare0_flip"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(match_operand:SI 1 "memory_operand" "h"))
+   (set (reg:CC_Z CC_REG)
+	(compare:CC_Z (match_dup 1)
+		      (const_int 0)))]
+  "!TARGET_XMM && !propeller_cogmem_p (operands[1])"
+  "rdlong\t%0, %1 wz"
+  [(set_attr "type" "hub")
+   (set_attr "conds" "set")
+   (set_attr "predicable" "yes")]
+)
+
 (define_insn "*movsi_compare0_flip"
   [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
 	(match_operand:SI 1 "propeller_src_operand" "rCI"))
@@ -1289,6 +1530,152 @@
    (set_attr "predicable" "yes")]
 )
 
+
+;; -------------------------------------------------------------------------
+;; 9-bit field inserts: MOVS, MOVD, MOVI
+;;
+;; These write one 9-bit field of the destination and leave every other bit
+;; alone, which is exactly a zero_extract insert.  Verified against hardware
+;; (spinsim): the source is masked to 9 bits before insertion, so no explicit
+;; masking of the source is needed.
+;;
+;;   MOVS D,S  ->  D = (D & ~0x000001FF) | ((S & 0x1FF) <<  0)
+;;   MOVD D,S  ->  D = (D & ~0x0003FE00) | ((S & 0x1FF) <<  9)
+;;   MOVI D,S  ->  D = (D & ~0xFF800000) | ((S & 0x1FF) << 23)
+;;
+;; combine's make_field_assignment turns the usual "(x & ~mask) | (v << pos)"
+;; C idiom into these zero_extract insns.
+;; -------------------------------------------------------------------------
+
+;; Route bit-field stores through MOVS/MOVD/MOVI when they land exactly on
+;; one of the three fields those instructions can write.  Anything else FAILs
+;; and store_bit_field falls back to its generic and/ior expansion (this is
+;; the same arrangement the rx port uses).
+(define_expand "insv"
+  [(set (zero_extract:SI (match_operand:SI 0 "propeller_dst_operand")
+			 (match_operand:SI 1 "const_int_operand")
+			 (match_operand:SI 2 "const_int_operand"))
+	(match_operand:SI 3 "propeller_src_operand"))]
+  ""
+{
+  if (INTVAL (operands[1]) != 9)
+    FAIL;
+
+  switch (INTVAL (operands[2]))
+    {
+    case 0:	/* movs */
+    case 9:	/* movd */
+    case 23:	/* movi */
+      break;
+    default:
+      FAIL;
+    }
+})
+
+(define_insn "*insvsi_movs"
+  [(set (zero_extract:SI (match_operand:SI 0 "propeller_dst_operand" "+rC")
+			 (const_int 9)
+			 (const_int 0))
+	(match_operand:SI 1 "propeller_src_operand" "rCI"))]
+  ""
+  "movs\t%0, %1"
+  [(set_attr "predicable" "yes")]
+)
+
+(define_insn "*insvsi_movd"
+  [(set (zero_extract:SI (match_operand:SI 0 "propeller_dst_operand" "+rC")
+			 (const_int 9)
+			 (const_int 9))
+	(match_operand:SI 1 "propeller_src_operand" "rCI"))]
+  ""
+  "movd\t%0, %1"
+  [(set_attr "predicable" "yes")]
+)
+
+(define_insn "*insvsi_movi"
+  [(set (zero_extract:SI (match_operand:SI 0 "propeller_dst_operand" "+rC")
+			 (const_int 9)
+			 (const_int 23))
+	(match_operand:SI 1 "propeller_src_operand" "rCI"))]
+  ""
+  "movi\t%0, %1"
+  [(set_attr "predicable" "yes")]
+)
+
+;; The same three, as combine sometimes leaves them in and/ior form.  The
+;; source mask matters for MOVS and MOVD (bits above the field would otherwise
+;; survive); for MOVI the shift by 23 already drops them off the top.
+
+(define_insn "*insvsi_movs_ior"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(ior:SI (and:SI (match_operand:SI 1 "propeller_dst_operand" "0")
+			(const_int -512))
+		(and:SI (match_operand:SI 2 "propeller_src_operand" "rCI")
+			(const_int 511))))]
+  ""
+  "movs\t%0, %2"
+  [(set_attr "predicable" "yes")]
+)
+
+(define_insn "*insvsi_movd_ior"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(ior:SI (and:SI (match_operand:SI 1 "propeller_dst_operand" "0")
+			(const_int -261633))
+		(and:SI (ashift:SI (match_operand:SI 2 "propeller_src_operand" "rC")
+				   (const_int 9))
+			(const_int 261632))))]
+  ""
+  "movd\t%0, %2"
+  [(set_attr "predicable" "yes")]
+)
+
+(define_insn "*insvsi_movi_ior"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(ior:SI (and:SI (match_operand:SI 1 "propeller_dst_operand" "0")
+			(const_int 8388607))
+		(ashift:SI (match_operand:SI 2 "propeller_src_operand" "rC")
+			   (const_int 23))))]
+  ""
+  "movi\t%0, %2"
+  [(set_attr "predicable" "yes")]
+)
+
+;; combine canonicalises the two "ior" arms by operand complexity, so the
+;; masked source may end up first.  Same three instructions, mirrored.
+
+(define_insn "*insvsi_movs_ior2"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(ior:SI (and:SI (match_operand:SI 2 "propeller_src_operand" "rCI")
+			(const_int 511))
+		(and:SI (match_operand:SI 1 "propeller_dst_operand" "0")
+			(const_int -512))))]
+  ""
+  "movs\t%0, %2"
+  [(set_attr "predicable" "yes")]
+)
+
+(define_insn "*insvsi_movd_ior2"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(ior:SI (and:SI (ashift:SI (match_operand:SI 2 "propeller_src_operand" "rC")
+				   (const_int 9))
+			(const_int 261632))
+		(and:SI (match_operand:SI 1 "propeller_dst_operand" "0")
+			(const_int -261633))))]
+  ""
+  "movd\t%0, %2"
+  [(set_attr "predicable" "yes")]
+)
+
+(define_insn "*insvsi_movi_ior2"
+  [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
+	(ior:SI (ashift:SI (match_operand:SI 2 "propeller_src_operand" "rC")
+			   (const_int 23))
+		(and:SI (match_operand:SI 1 "propeller_dst_operand" "0")
+			(const_int 8388607))))]
+  ""
+  "movi\t%0, %2"
+  [(set_attr "predicable" "yes")]
+)
 
 (define_expand "movhi"
   [(set (match_operand:HI 0 "nonimmediate_operand" "")
@@ -1333,7 +1720,7 @@
 
 (define_insn "*movhi_xmm"
   [(set (match_operand:HI 0 "nonimmediate_operand"          "=rC,rC,rC,S,r,m")
-	(match_operand:HI 1 "general_operand"               "rCI,N,S,rC,m,r"))]
+	(match_operand:HI 1 "general_operand"               "rCI,N,S,rD,m,r"))]
   "TARGET_XMM"
   "@
    mov\t%0, %1
@@ -1350,7 +1737,7 @@
 
 (define_insn "*movhi"
   [(set (match_operand:HI 0 "nonimmediate_operand"          "=rC,rC,rC,m")
-	(match_operand:HI 1 "general_operand" "rCI,N,m,rC"))]
+	(match_operand:HI 1 "general_operand" "rCI,N,m,rD"))]
   "!TARGET_XMM"
   "@
    mov\t%0, %1
@@ -1375,7 +1762,7 @@
 
 (define_insn "*movqi_xmm"
   [(set (match_operand:QI 0 "nonimmediate_operand"          "=rC,rC,rC,S,r,m")
-	(match_operand:QI 1 "general_operand"               "rCI,N,S,rC,m,r"))]
+	(match_operand:QI 1 "general_operand"               "rCI,N,S,rD,m,r"))]
   "TARGET_XMM"
   "@
    mov\t%0, %1
@@ -1392,7 +1779,7 @@
 
 (define_insn "*movqi"
   [(set (match_operand:QI 0 "nonimmediate_operand"   "=rC,rC,rC,m")
-	(match_operand:QI 1 "general_operand"         "rCI,N,m,rC"))]
+	(match_operand:QI 1 "general_operand"         "rCI,N,m,rD"))]
   "!TARGET_XMM"
   "@
    mov\t%0, %1
@@ -1635,22 +2022,19 @@
 "")
 
 ;;
-;; we have a library udivmoddi4 routine, so try to force generation of
-;; a call to it
-;; we do this by having a simple expander that will catch divide by 2
+;; There is no DImode divmod instruction or expansion on the Propeller;
+;; 64-bit division goes through the libgcc helpers (__udivdi3/__umoddi3).
 ;;
-(define_expand "udivmoddi4"
-  [(set (match_operand:DI 0 "propeller_dst_operand")
-        (div:DI (match_operand:DI 2 "propeller_dst_operand" "")
-	        (match_operand:DI 3 "propeller_src_operand" "")))
-   (set (match_operand:DI 1 "propeller_dst_operand")
-        (mod:DI (match_dup 2)(match_dup 3)))
-  ]
-""
-{
-  FAIL;
-}
-)
+;; A "udivmoddi4" expander used to be defined here whose body was an
+;; unconditional FAIL.  Defining a named expander registers an optab
+;; handler for udivmod_optab in DImode even when the body always fails,
+;; which makes tree-ssa-math-opts believe the target has a real divmod
+;; and turn adjacent a/b and a%b into a single .DIVMOD internal call.
+;; expand_DIVMOD then takes the "optab_handler exists" path and ignores
+;; the failure of expand_twoval_binop, leaving the quotient and remainder
+;; as uninitialised pseudos -- i.e. silently wrong code at -O2/-Os.
+;; Not defining the pattern at all lets target_supports_divmod_p correctly
+;; conclude the transform is unavailable, so the libgcc calls are used.
 ;; -------------------------------------------------------------------------
 ;; min/max instructions
 ;; NOTE!! The Propeller instruction names are the reverse of what one
@@ -1738,7 +2122,7 @@
     mode = GET_MODE (ccreg);
 
     /* we have to actually emit the compare! */
-    emit_insn (gen_rtx_SET (VOIDmode, ccreg, gen_rtx_COMPARE (mode, x, y)));
+    emit_insn (gen_rtx_SET (ccreg, gen_rtx_COMPARE (mode, x, y)));
     operands[1] = gen_rtx_fmt_ee (code, VOIDmode, ccreg, const0_rtx);
   }"
 )
@@ -1916,8 +2300,8 @@
 (define_insn "cmpdi_signed"
   [(set (reg:CC CC_REG)
 	(compare:CC
-	 (match_operand:DI 0 "propeller_dst_operand" "rC")
-	 (match_operand:DI 1 "propeller_src_operand"	"rCI")))]
+	 (match_operand:DI 0 "register_operand" "r")
+	 (match_operand:DI 1 "propeller_nonmem_src_operand"	"rI")))]
   ""
   "cmp\\t%Q0, %Q1 wz,wc\n\\tcmpsx\\t%R0, %R1 wz,wc"
   [(set_attr "length" "8")
@@ -1928,8 +2312,8 @@
 (define_insn "cmpdi_unsigned"
   [(set (reg:CCUNS CC_REG)
 	(compare:CCUNS
-	 (match_operand:DI 0 "propeller_dst_operand" "rC")
-	 (match_operand:DI 1 "propeller_src_operand"	"rCI")))]
+	 (match_operand:DI 0 "register_operand" "r")
+	 (match_operand:DI 1 "propeller_nonmem_src_operand"	"rI")))]
   ""
   "cmp\\t%Q0, %Q1 wz,wc\n\\tcmpx\\t%R0, %R1 wz,wc"
   [(set_attr "length" "8")
@@ -1998,6 +2382,38 @@
 [(set_attr "conds" "use")
  (set_attr "type" "dbranch")
 ]
+)
+
+;; TJZ / TJNZ: test a register against zero and branch, in one instruction.
+;;
+;; The branch target sits in the s-field, which is a 9-bit *cog* address, so
+;; these are only usable when the code is running from cog memory, i.e. in
+;; -mcog.  In LMM and CMM the branch targets are hub addresses reached through
+;; the kernel, so the ordinary compare-and-branch pair is used there.
+;;
+;; Neither instruction writes its destination, and without wz/wc neither
+;; touches the flags, so nothing is clobbered here.
+
+(define_insn "*tj<eqne:code>"
+  [(set (pc)
+	(if_then_else (eqne (match_operand:SI 0 "propeller_dst_operand" "rC")
+			    (const_int 0))
+		      (label_ref (match_operand 1 "" ""))
+		      (pc)))]
+  "!TARGET_LMM"
+  "tj<eqne:tjsuffix>\t%0, #%l1"
+  [(set_attr "type" "dbranch")]
+)
+
+(define_insn "*tj<eqne:code>_reverse"
+  [(set (pc)
+	(if_then_else (eqne (match_operand:SI 0 "propeller_dst_operand" "rC")
+			    (const_int 0))
+		      (pc)
+		      (label_ref (match_operand 1 "" ""))))]
+  "!TARGET_LMM"
+  "tj<eqne:tjrsuffix>\t%0, #%l1"
+  [(set_attr "type" "dbranch")]
 )
 
 (define_insn "*condbranch_reverse"
@@ -3290,6 +3706,59 @@
   ]
   "peep2_reg_dead_p (2, operands[0]) && !(MEM_P (operands[1]) && MEM_VOLATILE_P (operands[1]))"
   [(const_int 0)]
+  ""
+)
+
+;; Arithmetic whose result lands in a cog variable is done in a temporary
+;; and copied back:
+;;	rdlong	r7, _hp
+;;	add	r7, #1
+;;	mov	_cv, r7
+;; when the cog variable can take both steps itself:
+;;	rdlong	_cv, _hp
+;;	add	_cv, #1
+(define_peephole2
+  [(set (match_operand:SI 0 "register_operand" "")
+	(match_operand:SI 1 "general_operand" ""))
+   (set (match_dup 0)
+	(match_operator:SI 2 "propeller_cogrmw_op"
+	  [(match_dup 0)
+	   (match_operand:SI 3 "propeller_src_operand" "")]))
+   (set (match_operand:SI 4 "propeller_dst_operand" "")
+	(match_dup 0))]
+  "!TARGET_XMM
+   && peep2_reg_dead_p (3, operands[0])
+   && propeller_cogvar_rmw_ok (operands[0], operands[1], operands[4],
+			       operands[3], NULL_RTX)"
+  [(set (match_dup 4) (match_dup 1))
+   (set (match_dup 4)
+	(match_op_dup 2 [(match_dup 4) (match_dup 3)]))]
+  ""
+)
+
+;; The same with two operations before the copy back.
+(define_peephole2
+  [(set (match_operand:SI 0 "register_operand" "")
+	(match_operand:SI 1 "general_operand" ""))
+   (set (match_dup 0)
+	(match_operator:SI 2 "propeller_cogrmw_op"
+	  [(match_dup 0)
+	   (match_operand:SI 3 "propeller_src_operand" "")]))
+   (set (match_dup 0)
+	(match_operator:SI 5 "propeller_cogrmw_op"
+	  [(match_dup 0)
+	   (match_operand:SI 6 "propeller_src_operand" "")]))
+   (set (match_operand:SI 4 "propeller_dst_operand" "")
+	(match_dup 0))]
+  "!TARGET_XMM
+   && peep2_reg_dead_p (4, operands[0])
+   && propeller_cogvar_rmw_ok (operands[0], operands[1], operands[4],
+			       operands[3], operands[6])"
+  [(set (match_dup 4) (match_dup 1))
+   (set (match_dup 4)
+	(match_op_dup 2 [(match_dup 4) (match_dup 3)]))
+   (set (match_dup 4)
+	(match_op_dup 5 [(match_dup 4) (match_dup 6)]))]
   ""
 )
 

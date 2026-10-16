@@ -150,7 +150,12 @@ X_loopend
         mvi     r2,#__bss_end
         sub     r2,r0
         mov     r1,#0
-        lcall   #_memset
+''        lcall   #_memset
+__bss_clear
+        wrbyte  r1,r0
+        add     r0,#1
+        sub     r2,#1 wz,wc
+  if_nz brs     __bss_clear
 
 #endif
 

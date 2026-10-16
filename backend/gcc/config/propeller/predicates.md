@@ -49,10 +49,18 @@
        (match_test "SYMBOL_REF_FUNCTION_P (op)")))
 
 ;; True if OP is suitable as a general propeller destination operand
+;; True if OP is any reference to cog memory
+(define_predicate "propeller_cogmem_operand"
+  (and (match_operand 0 "memory_operand")
+       (match_test "propeller_cogmem_p (op)")))
+
+;; True if OP may be used in the D field of an instruction that reads D.
+;; PAR, CNT, INA, INB, PHSA and PHSB are only readable through the S field,
+;; so they are excluded here but still accepted by propeller_src_operand.
 (define_predicate "propeller_dst_operand"
   (ior (match_operand 0 "register_operand")
-       (and (match_operand 0 "memory_operand")
-            (match_test "propeller_cogmem_p (op)"))))
+       (and (match_operand 0 "propeller_cogmem_operand")
+            (match_test "!propeller_srconly_cogmem_p (op)"))))
 
 ;; True if OP is suitable as a register propeller destination operand
 ;; in TARGET_XMM the stack pointer and other cog memory locations
@@ -77,9 +85,20 @@
 
 (define_predicate "propeller_src_operand"
   (ior (match_operand 0 "propeller_dst_operand")
+       (match_operand 0 "propeller_cogmem_operand")
        (and (match_operand 0 "immediate_operand")
             (match_test "propeller_const_ok_for_letter_p(INTVAL(op), 'I')"))
 ))
+
+;; Like propeller_src_operand but excluding memory.  Used by the DImode
+;; compares, whose %Q/%R operand codes can only print registers and
+;; constants -- a cog-memory operand there would be an output_operand
+;; lossage (which is what -mcog used to ICE on).
+
+(define_predicate "propeller_nonmem_src_operand"
+  (ior (match_operand 0 "register_operand")
+       (and (match_operand 0 "immediate_operand")
+            (match_test "propeller_const_ok_for_letter_p(INTVAL(op), 'I')"))))
 
 ;; for addition we can also do negative immediates
 (define_predicate "propeller_add_operand"
@@ -110,6 +129,12 @@
 ;; true if this operator is a math operator with 1 arguments
 (define_special_predicate "propeller_math_op1"
   (match_code "neg,not,abs"))
+
+;; Two-operand operations whose patterns all take a cog variable as the
+;; destination ("=rC" tied to "0") and a propeller_src_operand as the source,
+;; so "D = D <op> S" can be done in cog memory directly.
+(define_special_predicate "propeller_cogrmw_op"
+  (match_code "plus,minus,and,ior,xor,ashift,lshiftrt,ashiftrt,rotate,rotatert,umin,umax,smin,smax"))
 
 ;; true if this operator is a math operator with 1 argument that
 ;; sets flags based on source

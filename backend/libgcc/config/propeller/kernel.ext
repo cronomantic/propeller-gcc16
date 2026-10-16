@@ -60,6 +60,7 @@ __DIVCNT
 
 	.global __CLZSI
 	.global __CLZSI_ret
+	.global __CTZSI
 __CLZSI
 	rev	r0, #0
 __CTZSI

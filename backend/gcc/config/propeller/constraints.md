@@ -50,6 +50,20 @@
        (and (match_code "reg")
             (match_test "REGNO (op) <= PROP_SP_REGNUM"))))
 
+;;
+;; Like "C", but excluding the registers that can only be read through the
+;; S field (PAR, CNT, INA, INB, PHSA, PHSB).  Use this wherever the operand
+;; ends up in the instruction's D field and is read, such as the value
+;; stored by wrbyte/wrword/wrlong.
+;;
+(define_constraint "D"
+  "A cog memory reference usable in the D field"
+  (ior (and (match_code "mem")
+            (match_test "propeller_cogmem_p (op)")
+            (match_test "!propeller_srconly_cogmem_p (op)"))
+       (and (match_code "reg")
+            (match_test "REGNO (op) <= PROP_SP_REGNUM"))))
+
 (define_memory_constraint "S"
   "A register indirect memory operand pointing into the stack."
   (and (match_code "mem")
