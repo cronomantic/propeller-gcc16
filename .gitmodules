@@ -1,0 +1,23 @@
+# The rest of the toolchain, pinned to the commits propgcc-16 was built
+# and tested with.  The URLs are relative to this repository's, so they
+# point to forks of the same names next to it on GitHub:
+#   binutils-propeller  <- totalspectrum/binutils-propeller
+#   proplib             <- totalspectrum/proplib
+#   propeller-load      <- dbetz/propeller-load
+#   OpenSpin            <- parallaxinc/OpenSpin
+[submodule "deps/binutils-propeller"]
+	path = deps/binutils-propeller
+	url = ../binutils-propeller.git
+	shallow = true
+[submodule "deps/proplib"]
+	path = deps/proplib
+	url = ../proplib.git
+	shallow = true
+[submodule "deps/propeller-load"]
+	path = deps/propeller-load
+	url = ../propeller-load.git
+	shallow = true
+[submodule "deps/OpenSpin"]
+	path = deps/OpenSpin
+	url = ../OpenSpin.git
+	shallow = true
