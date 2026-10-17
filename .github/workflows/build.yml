@@ -1,6 +1,6 @@
-# Build propgcc-16 on Linux and Windows (MSYS2 UCRT64), run tests/run.sh, and keep
-# the installed toolchains as artifacts.  A tag v* publishes them as a
-# release.
+# Build propgcc-16 on Linux and Windows (MSYS2 UCRT64), run tests/run.sh
+# (the hub-memory builds in emu/'s Propeller emulator), and keep the
+# installed toolchains as artifacts.  A tag v* publishes them as a release.
 name: build
 
 on:
@@ -40,8 +40,11 @@ jobs:
       - name: Build
         run: PREFIX=$RUNNER_TEMP/propgcc-16 JOBS=$(nproc) ./build.sh
 
+      - name: Emulator
+        run: make -C emu all test
+
       - name: Test
-        run: PATH=$RUNNER_TEMP/propgcc-16/bin:$PATH tests/run.sh
+        run: PATH=$RUNNER_TEMP/propgcc-16/bin:$PATH P1RUN=emu/build/p1run tests/run.sh
 
       - name: Package
         run: tar -C "$RUNNER_TEMP" -cJf propgcc-16-linux-x86_64.tar.xz propgcc-16
@@ -90,8 +93,11 @@ jobs:
       - name: Build
         run: PREFIX=/c/propgcc-16 JOBS=$(nproc) ./build.sh
 
+      - name: Emulator
+        run: make -C emu all test
+
       - name: Test
-        run: PATH=/c/propgcc-16/bin:$PATH tests/run.sh
+        run: PATH=/c/propgcc-16/bin:$PATH P1RUN=emu/build/p1run.exe tests/run.sh
 
       - name: Package
         run: |

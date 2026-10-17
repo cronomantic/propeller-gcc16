@@ -3,18 +3,18 @@
 # installed toolchain (propeller-elf-gcc on PATH) at -O2 and -Os.
 #
 # With P1RUN set to a Propeller 1 emulator that runs a Spin .binary and
-# prints its serial output (PropDuo's emu p1run: "p1run file.binary --baud
-# 115200 --seconds N"), the hub-memory builds (LMM, CMM) are also run and
-# must print their "passed" line.
+# prints its serial output (emu/'s p1run: "make -C emu" builds
+# emu/build/p1run), the hub-memory builds (LMM, CMM) are also run and must
+# print their "passed" line.
 #
 #   tests/run.sh
-#   P1RUN=~/PropDuo/emu/build-linux/p1run P1ROM=~/PropDuo/emu/rom/p1rom.bin tests/run.sh
+#   make -C emu && P1RUN=emu/build/p1run tests/run.sh
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CC=${CC:-propeller-elf-gcc}
 OUT=$(mktemp -d)
-MODELS="lmm cmm xmmc xmm-single xmm-split"
+MODELS="lmm cmm xmmc xmm-single xmm-split xmm"
 fails=0
 
 for t in bench regress; do
@@ -40,7 +40,7 @@ if [ -n "${P1RUN:-}" ]; then
                 [ -f "$elf" ] || continue
                 (cd "$OUT" && propeller-load -s "$elf" > /dev/null 2>&1)
                 bin=${elf%.elf}.binary
-                out=$("$P1RUN" "$bin" --baud 115200 --seconds 20 ${P1ROM:+--rom "$P1ROM"} 2> /dev/null)
+                out=$("$P1RUN" "$bin" --baud 115200 --seconds 20 --until passed 2> /dev/null)
                 if grep -q "passed" <<< "$out"; then
                     printf '  run %-8s %-3s %-4s %s\n' "$t" "$opt" "$m" "$(head -n1 <<< "$out" | tr -d '\r')"
                 else

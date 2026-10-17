@@ -37,6 +37,7 @@ This fork keeps the toolchain buildable and maintainable on its own:
 | `deps/OpenSpin` | The Spin compiler, used by the loader (Parallax, 2018) |
 | `build.sh` | Builds and installs the whole toolchain |
 | `tests/` | `run.sh`: every test in every memory model, run in an emulator if one is given |
+| `emu/` | A Propeller 1 emulator (`p1run`) and the P1 ROM, to run the tests |
 | `CHANGES.md` | The port's changes against propgcc's GCC 6 back end |
 
 ## Building
@@ -74,22 +75,28 @@ propgcc.
     tests/run.sh
 
 compiles and links `tests/bench.c` and `tests/regress.c` at `-O2` and
-`-Os` in the LMM, CMM, XMMC, XMM single and XMM split models.  With an
-emulator that runs a Spin `.binary` and prints its serial output, the
+`-Os` in the LMM, CMM, XMMC, XMM single, XMM split and XMM models.  With
+an emulator that runs a Spin `.binary` and prints its serial output, the
 hub-memory builds are run too and must report success:
 
-    P1RUN=path/to/p1run P1ROM=path/to/p1rom.bin tests/run.sh
+    make -C emu
+    P1RUN=emu/build/p1run tests/run.sh
 
-(`p1run` is part of PropDuo's emulator, `emu/`.)  `regress.c` checks the code generation bugs that `CHANGES.md`
-lists as fixed (64-bit division, `float` to `double`, `__builtin_ctz`,
+`emu/` is a Propeller 1 emulator: the eight cogs instruction by
+instruction with the chip's timing, the hub, the counters, and the ROM
+(Parallax's, GPL-3.0, from its Verilog release: see `emu/rom/README.md`).
+`p1run` boots a `.binary` as the chip does and prints what the program
+sends on P30; `make -C emu test` checks the emulator against instruction
+vectors generated with spinsim.  `regress.c` checks the code generation
+bugs that `CHANGES.md` lists as fixed (64-bit division, `float` to `double`, `__builtin_ctz`,
 the new MOVS/MOVD/MOVI and ADDS/SUBS patterns).
 
 ## Continuous integration and binaries
 
 `.github/workflows/build.yml` builds the toolchain on Linux (Ubuntu
 24.04) and on Windows (MSYS2 UCRT64) on every push and pull request,
-and runs `tests/run.sh` (compile and link only: there is no Propeller
-emulator on the runners).  Each run keeps the installed toolchain as an
+and runs `tests/run.sh` with `emu/`'s emulator (the external-memory
+builds are compiled and linked only).  Each run keeps the installed toolchain as an
 artifact (`propgcc-16-linux-x86_64.tar.xz`,
 `propgcc-16-windows-x86_64.zip`, with the UCRT64 runtime DLLs next to the
 programs).  Pushing a tag `v*` also publishes them as a GitHub release.
