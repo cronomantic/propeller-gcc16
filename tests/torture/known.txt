@@ -19,3 +19,10 @@ stkalign        CE  *  *   # over-aligned local
 struct-cpy-1    CE  *  *   # aligned(8) struct
 # No __int128 on a 32-bit target (the test does not ask for int128)
 pr105613        CE  *  *   # __int128
+# Nested functions whose address is taken need a trampoline, which the
+# back end only builds in hub code it can patch: in CMM it refuses them
+# ("nested functions not supported in CMM mode").
+nestfunc-3      CE  cmm  *  # trampoline
+nestfunc-5      CE  cmm  *  # trampoline
+nestfunc-6      CE  cmm  *  # trampoline
+20000822-1      CE  cmm  *  # trampoline

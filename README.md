@@ -106,7 +106,7 @@ the new MOVS/MOVD/MOVI and ADDS/SUBS patterns).
 
 ### GCC's torture tests
 
-    tests/torture/run.py --model lmm,xmmc --opt -O2,-Os -j 8
+    tests/torture/run.py --model lmm,xmmc --opt=-O2,-Os -j 8
 
 runs GCC's `gcc.c-torture/execute` tests (1,692 self-checking programs,
 from the GCC sources that `build.sh` unpacks into `work/`) in the

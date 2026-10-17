@@ -262,6 +262,16 @@ Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
   allocator took the offset at the label from the function's start.  A
   function with a non-local label now keeps its frame pointer
   (`TARGET_FRAME_POINTER_REQUIRED`), which the jump restores.
+* **Every negative `double` converted to `float` came out positive**
+  (`conversion.c` at `-O0`, every memory model, with `-m64bit-doubles`;
+  through `__floatdisf`, `long long` to `float` too).  `__truncdfsf2`
+  unpacked the double, then loaded the float code, whose loader
+  (`__load_float_code`) trashes `r6` -- the unpacked sign -- before
+  `__FPack` packed the result.  The sign is now kept in `r4` meanwhile.
+  It also rounded from the high 28 bits of the mantissa only: the bits
+  below, in `Alo`, now set the sticky bit, so that doubles just above a
+  halfway point round up.  At `-O2` most such conversions of constants
+  are done by the compiler, which hid it.
 * **`printf("%.0f", 5.0)` printed `5.`** (`930513-1.c`): the C library's
   float formatter always put the radix point after the integer digit.  It
   now does only when digits follow or with `#` (in `deps/proplib`, branch

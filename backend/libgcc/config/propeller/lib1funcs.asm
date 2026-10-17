@@ -1123,7 +1123,16 @@ ___truncdfsf2
 		SAVEREGS
 		lcall	#__load_double_code
 		lcall	#__DUnpack
+		'' __FPack rounds the 4.28 mantissa in A; the bits below it,
+		'' in Alo, can only make the result sticky
+		cmp	Alo, #0 wz
+	if_nz	or	Aflag, #FLAG_STICKY
+		'' __load_float_code trashes r6, which is Aflag (with the
+		'' sign): keep it in r4 meanwhile.  Without this every
+		'' negative double came out as a positive float.
+		mov	r4, Aflag
 		lcall	#__load_float_code
+		mov	Aflag, r4
 		call	#__FPack
 		RESTOREREGS
 		LMMRET

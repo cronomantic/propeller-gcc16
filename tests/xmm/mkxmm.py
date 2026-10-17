@@ -133,8 +133,13 @@ def main():
     ram_base = 0
     if base >= 0x30000000 and any(0x20000000 <= p[3] < 0x30000000 for p in elf.programs):
         ram_base = (len(image) + 1023) & ~1023
-    if max(len(image), ram_base) > SRAM_SIZE:
-        sys.exit("%s: %d bytes do not fit in the %d KB SRAM" % (args.elf, len(image), SRAM_SIZE // 1024))
+    # what the program uses of the RAM space, .bss included: the image
+    # only holds the initialised part
+    ram_end = max([p[3] + p[5] - 0x20000000 for p in elf.programs
+                   if 0x20000000 <= p[3] < 0x30000000] + [0])
+    need = max(len(image), ram_base + ram_end)
+    if need > SRAM_SIZE:
+        sys.exit("%s: %d bytes do not fit in the %d KB SRAM" % (args.elf, need, SRAM_SIZE // 1024))
     stem = os.path.splitext(args.elf)[0]
     open(stem + ".xmm", "wb").write(image)
 

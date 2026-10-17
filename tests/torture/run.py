@@ -9,9 +9,10 @@ models (through tests/xmm/mkxmm.py).  A test passes when it exits with
 status 0; abort() gives 255.
 
 Results, one line per test, in OUT/MODEL-OPT/results.txt:
-  PASS        exit status 0
+  PASS        exit status 0 (with the emulated time it took)
   FAIL        another status, or the program stopped without exiting
-  TIMEOUT     still running after the time limit
+  TIMEOUT     still running after the time limit (--seconds, three times
+              that from external memory)
   ICE         the compiler crashed (internal compiler error)
   CE          another compile or link error
   NOFIT       too big for the memory model (the linker says so)
@@ -28,10 +29,11 @@ evaluated for propeller-unknown-elf with the effective targets of
 TARGET below.
 
 Usage:
-  tests/torture/run.py [--model lmm] [--opt -O2] [-j N] [--src DIR]
+  tests/torture/run.py [--model lmm] [--opt=-O2] [-j N] [--src DIR]
                        [--p1run emu/build/p1run] [--out DIR] [--known FILE]
                        [--seconds 20] [tests...]
-  --model and --opt take comma-separated lists; tests are names without
+  --model and --opt take comma-separated lists (--opt=-O0,-Os: with "=",
+  or the list is taken for an option); tests are names without
   .c (shell patterns allowed); --src is the GCC source tree (default:
   work/gcc-16.2.0 next to build.sh, or $GCC_SRC); --known lists failures
   that are not to fail the run (see known.txt).
@@ -57,6 +59,9 @@ BASE_FLAGS = ["-m64bit-doubles", "-w", "-fno-diagnostics-color"]
 # STACK_SIZE (the tests then scale their arrays), dg-require-stack-size
 # above it is UNSUPPORTED.  The stack is in hub RAM in every model.
 STACK_SIZE = 8192
+# Programs run from external memory (XMMC, XMM) get this many times the
+# time limit: every cache miss reads the SPI SRAM bit by bit.
+XMEM_FACTOR = 3
 
 # Effective targets (gcc/testsuite/lib/target-supports.exp) as they hold
 # for propgcc: 32-bit int, long and pointers, 64-bit long long, 64-bit
@@ -278,7 +283,7 @@ def run_one(path, model, opt, exit_obj, args, logdir):
             if "do not fit" in r.stdout + r.stderr:
                 return name, "NOFIT", "external image too big"
             return finish(name, "CE", "image: " + first_line(r.stdout + r.stderr, ""), log, logdir)
-        secs = args.seconds * factor
+        secs = args.seconds * factor * (1 if model in ("lmm", "cmm") else XMEM_FACTOR)
         cmd = [args.p1run, elf[:-4] + ".binary"] + sram + ["--seconds", "%g" % secs]
         log.append("$ " + " ".join(cmd))
         try:
@@ -291,7 +296,7 @@ def run_one(path, model, opt, exit_obj, args, logdir):
         m = re.search(r"\[p1run: ([0-9.]+) s emulated, ([^\]]*)\]", err)
         why = m.group(2) if m else "no p1run summary"
         if why == "exit 0":
-            status, reason = "PASS", ""
+            status, reason = "PASS", m.group(1) + " s"
         elif why == "time limit":
             status, reason = "TIMEOUT", "%g s" % secs
         else:
