@@ -22,6 +22,9 @@
 #define GCC_PROPELLER_PROTOS_H
 
 extern void propeller_output_label (FILE *file, const char * name);
+/* true while final is writing the inside of a CMM fcache block, which is
+   assembled uncompressed (.compress off) */
+extern bool propeller_fcache_output;
 extern void propeller_print_operand (FILE *file, rtx op, int letter);
 extern void propeller_print_operand_address (FILE *file, machine_mode mode,
                                             rtx addr);

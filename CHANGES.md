@@ -262,6 +262,16 @@ Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
   allocator took the offset at the label from the function's start.  A
   function with a non-local label now keeps its frame pointer
   (`TARGET_FRAME_POINTER_REQUIRED`), which the jump restores.
+* **A CMM loop put in the fcache could overrun it and hang** (csmith,
+  reduced with cvise: two programs hung at CMM `-O2`).  The fcache
+  check adds up the insns' lengths, which in CMM are those of compressed
+  code, but an fcache block is assembled uncompressed (`.compress off`):
+  `leasp` (2 bytes compressed) is a `mov` and an `add` there, 8 bytes.
+  A block with three of them came to 260 bytes against the 252 of the
+  CMM fcache area and ran over the kernel.  The check now counts such
+  insns at 8 bytes, and the peephole that turns `mov rN,sp` into
+  `leasp rN,#0` (shorter only when compressed) is off inside fcache
+  blocks.
 * **Seven patterns clobbered the flags without saying so** (found by
   csmith, reduced with cvise: a store in the right operand of `||` lost
   at LMM `-O2`).  `subdi3`, the three `djnz` patterns, `coginit`,

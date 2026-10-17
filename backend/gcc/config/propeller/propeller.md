@@ -2836,7 +2836,10 @@
 (define_insn "fcache_done"
   [(unspec_volatile [(const_int 0)] UNSPEC_FCACHE_DONE)]
   ""
-  "jmp\t__LMM_RET\n\t.compress default"
+  {
+    propeller_fcache_output = false;
+    return "jmp\t__LMM_RET\n\t.compress default";
+  }
   [(set_attr "length" "4")]
 )
 
@@ -2844,7 +2847,10 @@
 (define_insn "fcache_done_func"
   [(unspec_volatile [(const_int 1)] UNSPEC_FCACHE_DONE)]
   ""
-  ".compress default"
+  {
+    propeller_fcache_output = false;
+    return ".compress default";
+  }
   [(set_attr "length" "0")]
 )
 
@@ -3505,6 +3511,7 @@
   ""
   {
 	if (TARGET_CMM) {
+	  propeller_fcache_output = true;
 	  return "fcache #(%1-%0)\n\t.compress off\n";
         }
 	return "jmp\t#__LMM_FCACHE_LOAD\n\tlong\t%1-%0";
@@ -3948,12 +3955,13 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 ;; mov rn, sp -> leasp rn, #0
-;; 
+;; (shorter compressed; not inside an fcache block, which is assembled
+;; uncompressed: leasp is a mov and an add there)
 (define_peephole
   [(set (match_operand:SI 0 "register_operand" "")
         (reg:SI SP_REG))
   ]
-  "TARGET_CMM"
+  "TARGET_CMM && !propeller_fcache_output"
   "leasp\t%0, #0"
 )
 

@@ -139,6 +139,7 @@ static int propeller_base_target_flags;
 
 /* true if -mcog is the default mode */
 bool propeller_base_cog;
+bool propeller_fcache_output;
 
 /* CPU to generate code for */
 enum processor propeller_cpu;
@@ -3603,7 +3604,17 @@ fcache_block_ok (rtx_insn* first, rtx_insn* last, bool func_p, bool force_p)
               return false;
             }
         }
-      total_len += get_attr_length (insn);
+      {
+        int len = get_attr_length (insn);
+        /* In CMM the lengths are those of compressed code, but an fcache
+           block is assembled uncompressed: the one shorter than a long,
+           leasp (2), is a mov and an add there (8).  Counted as 2, a block
+           with three of them came to 260 bytes against the 252 of the
+           fcache area, ran over the kernel and hung (csmith seed 1145).  */
+        if (TARGET_CMM && len > 0 && len < 4)
+          len = 8;
+        total_len += len;
+      }
       if (total_len > fcache_size)
         {
           if (dump_file)

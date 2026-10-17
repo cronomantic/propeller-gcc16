@@ -139,7 +139,8 @@ def one_seed(seed, args, configs, exit_objs):
     try:
         src = os.path.join(tmp, "t%d.c" % seed)
         with open(src, "wb") as f:
-            r = run([args.csmith, "--seed", str(seed)] + CSMITH_OPTS, 60)
+            # (csmith writes platform.info where it runs)
+            r = run([args.csmith, "--seed", str(seed)] + CSMITH_OPTS, 60, cwd=tmp)
             if r is None or r.returncode:
                 return seed, None, []
             f.write(r.stdout)
