@@ -13,6 +13,10 @@
 # $WORK/logs.  Needs a C/C++ compiler, make, flex, bison, texinfo, curl
 # or wget, and the GMP, MPFR and MPC headers.
 #
+# The programs that run on the host are installed without their debug
+# information (install-strip): about 140 MB instead of 1.1 GB.
+# KEEP_DEBUG=1 keeps it.  The Propeller libraries are never stripped.
+#
 # The 2016-2018 sources in deps/ are built with relaxed diagnostics, as
 # in the port's original instructions.  The C library is built without
 # -j: its makefile races in parallel.
@@ -37,6 +41,12 @@ OLD_C="-std=gnu17 -Wno-error -Wno-implicit-function-declaration -Wno-implicit-in
 OLD_LIB="-std=gnu17 -Wno-error -Wno-implicit-function-declaration -Wno-implicit-int \
 -Wno-int-conversion -Wno-incompatible-pointer-types -Wno-builtin-declaration-mismatch \
 -Wno-unused-but-set-variable"
+
+if [ "${KEEP_DEBUG:-0}" = 1 ]; then
+    INSTALL_GCC=install-gcc
+else
+    INSTALL_GCC=install-strip-gcc
+fi
 
 LOGS=$WORK/logs
 mkdir -p "$WORK" "$LOGS" "$PREFIX"
@@ -78,7 +88,7 @@ run binutils-configure.log "$ROOT/deps/binutils-propeller/configure" --target=pr
     --prefix="$PREFIX" --disable-nls --disable-shared --disable-gdb --disable-werror \
     CFLAGS="-O2 -g $OLD_C"
 run binutils-make.log make -j"$JOBS"
-run binutils-install.log make install
+run binutils-install.log make install         # its readline has no install-strip
 cd ..
 
 step "gcc and libgcc"
@@ -88,7 +98,7 @@ run gcc-configure.log "../gcc-$GCC_VERSION/configure" --target=propeller-elf --p
     --disable-libssp --disable-libquadmath --disable-libatomic --disable-libgomp \
     --with-pkgversion="propgcc-16"
 run gcc-make.log make -j"$JOBS" all-gcc
-run gcc-install.log make install-gcc
+run gcc-install.log make "$INSTALL_GCC"
 run libgcc-make.log make -j"$JOBS" all-target-libgcc
 run libgcc-install.log make install-target-libgcc
 cd ..
@@ -115,6 +125,16 @@ cp OpenSpin/build/openspin* "$PREFIX/bin/"             # openspin.exe on Windows
 rm -rf propeller-load build-loader && cp -a "$ROOT/deps/propeller-load" propeller-load
 run loader-make.log make -C propeller-load OS="$LOADER_OS" TARGET="$PREFIX" BUILDROOT="$WORK/build-loader"
 run loader-install.log make -C propeller-load OS="$LOADER_OS" TARGET="$PREFIX" BUILDROOT="$WORK/build-loader" install
+if [ "${KEEP_DEBUG:-0}" != 1 ]; then
+    step "host programs without debug information"
+    # gcc's were installed stripped; binutils', OpenSpin and the loader are
+    # stripped here.  Only host programs live in these two directories.
+    for f in "$PREFIX"/bin/* "$PREFIX"/propeller-elf/bin/*; do
+        [ -f "$f" ] || continue
+        [ "$(head -c2 "$f")" = "#!" ] && continue      # scripts
+        strip "$f" 2> /dev/null || true
+    done
+fi
 
 step "done"
 propeller-elf-gcc --version | head -1

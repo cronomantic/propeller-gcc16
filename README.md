@@ -57,7 +57,9 @@ against its SHA-256), grafts `backend/` onto it, applies `patches/`, and
 builds binutils, the compiler and libgcc, the C library, OpenSpin and the
 loader into `$PREFIX` (default `$HOME/propgcc-16`).  Work files and logs
 go to `$WORK` (default `./work`); `JOBS` sets make's parallelism.  It
-takes about 15-25 minutes.
+takes about 15-25 minutes.  The host programs are installed without their
+debug information (about 140 MB instead of 1.1 GB); `KEEP_DEBUG=1` keeps
+it.  The Propeller libraries are not stripped either way.
 
     PREFIX=/opt/propgcc-16 WORK=/tmp/pg16 JOBS=8 ./build.sh
     export PATH=$HOME/propgcc-16/bin:$PATH
@@ -85,11 +87,11 @@ the new MOVS/MOVD/MOVI and ADDS/SUBS patterns).
 ## Continuous integration and binaries
 
 `.github/workflows/build.yml` builds the toolchain on Linux (Ubuntu
-24.04) and on Windows (MSYS2, MinGW-w64) on every push and pull request,
+24.04) and on Windows (MSYS2 UCRT64) on every push and pull request,
 and runs `tests/run.sh` (compile and link only: there is no Propeller
 emulator on the runners).  Each run keeps the installed toolchain as an
 artifact (`propgcc-16-linux-x86_64.tar.xz`,
-`propgcc-16-windows-x86_64.zip`, with the MinGW runtime DLLs next to the
+`propgcc-16-windows-x86_64.zip`, with the UCRT64 runtime DLLs next to the
 programs).  Pushing a tag `v*` also publishes them as a GitHub release.
 
 ## Following the port upstream

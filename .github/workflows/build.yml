@@ -1,4 +1,4 @@
-# Build propgcc-16 on Linux and Windows (MSYS2), run tests/run.sh, and keep
+# Build propgcc-16 on Linux and Windows (MSYS2 UCRT64), run tests/run.sh, and keep
 # the installed toolchains as artifacts.  A tag v* publishes them as a
 # release.
 name: build
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -32,7 +32,7 @@ jobs:
             libgmp-dev libmpfr-dev libmpc-dev
 
       - name: GCC tarball cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: work/gcc-${{ env.GCC_VERSION }}.tar.xz
           key: gcc-${{ env.GCC_VERSION }}
@@ -46,12 +46,12 @@ jobs:
       - name: Package
         run: tar -C "$RUNNER_TEMP" -cJf propgcc-16-linux-x86_64.tar.xz propgcc-16
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: propgcc-16-linux-x86_64
           path: propgcc-16-linux-x86_64.tar.xz
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: logs-linux
@@ -68,21 +68,21 @@ jobs:
         shell: pwsh
         run: git config --global core.autocrlf false
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
             make flex bison texinfo patch tar xz diffutils curl zip
-            mingw-w64-x86_64-gcc mingw-w64-x86_64-gmp
-            mingw-w64-x86_64-mpfr mingw-w64-x86_64-mpc
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-gmp
+            mingw-w64-ucrt-x86_64-mpfr mingw-w64-ucrt-x86_64-mpc
 
       - name: GCC tarball cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: work/gcc-${{ env.GCC_VERSION }}.tar.xz
           key: gcc-${{ env.GCC_VERSION }}
@@ -95,9 +95,9 @@ jobs:
 
       - name: Package
         run: |
-          # the MinGW runtime DLLs the tools need, next to them
+          # the UCRT64 runtime DLLs the tools need, next to them
           for exe in /c/propgcc-16/bin/*.exe /c/propgcc-16/libexec/gcc/propeller-elf/*/*.exe; do
-            ldd "$exe" 2>/dev/null | awk '/mingw64/ {print $3}'
+            ldd "$exe" 2>/dev/null | awk '/ucrt64/ {print $3}'
           done | sort -u | while read -r dll; do
             cp -n "$dll" /c/propgcc-16/bin/
             cp -n "$dll" /c/propgcc-16/libexec/gcc/propeller-elf/*/ 2>/dev/null || true
@@ -105,12 +105,12 @@ jobs:
           cd /c && zip -qr "$GITHUB_WORKSPACE/propgcc-16-windows-x86_64.zip" propgcc-16 ||
             powershell -NoProfile -Command "Compress-Archive -Path C:\propgcc-16 -DestinationPath '${{ github.workspace }}\propgcc-16-windows-x86_64.zip'"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: propgcc-16-windows-x86_64
           path: propgcc-16-windows-x86_64.zip
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: logs-windows
@@ -121,11 +121,11 @@ jobs:
     needs: [linux, windows]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
