@@ -26,3 +26,17 @@ nestfunc-3      CE  cmm  *  # trampoline
 nestfunc-5      CE  cmm  *  # trampoline
 nestfunc-6      CE  cmm  *  # trampoline
 20000822-1      CE  cmm  *  # trampoline
+# Too slow for the time limit in some models, mostly at -O0 and from
+# external memory, where the emulator reads the SPI SRAM bit by bit; each
+# passes with a longer --seconds (the longest: arith-rand-ll, 234 s
+# emulated in XMM split at -O0).  A real hang in these would be hidden.
+20011008-3      TIMEOUT  *  *   # slow: 78 s in XMM -O0
+20040811-1      TIMEOUT  *  *   # slow: 161 s in XMM -O0
+arith-rand-ll   TIMEOUT  *  *   # slow: 234 s in XMM -O0, 73 s at -O2
+memcpy-2        TIMEOUT  *  *   # slow: 68 s in XMM -O0
+pr43220         TIMEOUT  *  *   # slow: 213 s in XMM -O0
+pr51581-2       TIMEOUT  *  *   # slow: 60 s in XMM -O0
+pr91137         TIMEOUT  *  *   # slow in CMM -O0
+strcpy-1        TIMEOUT  *  *   # slow: 65 s in XMM -O0
+strncmp-1       TIMEOUT  *  *   # slow in CMM -O0
+vla-dealloc-1   TIMEOUT  *  *   # slow: 161 s in XMM -O0

@@ -116,9 +116,13 @@ exit sequence, which `p1run` turns into its exit status) and run.  The
 tests' DejaGnu directives (`dg-options`, `dg-require-effective-target`,
 `dg-skip-if`...) are honoured; results and logs go to `work/torture`.
 `tests/torture/known.txt` lists what is expected not to pass, with the
-reason; the run fails on anything else.  In LMM at `-O2`: 1,654 pass, 6
-do not fit in hub RAM, 21 need what the target lacks, and 11 are known
-limitations (alignments above 4 bytes, `__int128`).
+reason; the run fails on anything else.  In every model (LMM, CMM,
+XMMC, XMM single, XMM split, XMM) at `-O0`, `-O2` and `-Os`, 1,640 to
+1,659 pass; the rest do not fit in memory (up to 16, in LMM at `-O0`),
+need what the target lacks (21), are known limitations (alignments above
+4 bytes, `__int128`, nested functions in CMM) or are too slow for the
+time limit, mostly at `-O0` from external memory (they pass with a
+longer `--seconds`).  The whole matrix takes about 25 minutes on 8 cores.
 
 ## Continuous integration and binaries
 
