@@ -262,6 +262,14 @@ Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
   allocator took the offset at the label from the function's start.  A
   function with a non-local label now keeps its frame pointer
   (`TARGET_FRAME_POINTER_REQUIRED`), which the jump restores.
+* **`propeller-load` loaded XMM programs whose hub contents reached into
+  the cache.**  The loader puts the cache, its tags and the external
+  memory driver's mailboxes at the top of hub RAM and the stack below
+  them; a program with more hub data than leaves room for them (XMMC
+  keeps all its data in the hub) was loaded and ran over its own data.
+  It is now refused, with where both end, and a warning is given when
+  less than 1 KB is left for the stack (`deps/propeller-load`, branch
+  `propgcc16`; `tests/xmm/mkxmm.py` checks the same for the emulator).
 * **A CMM loop put in the fcache could overrun it and hang** (csmith,
   reduced with cvise: two programs hung at CMM `-O2`).  The fcache
   check adds up the insns' lengths, which in CMM are those of compressed
