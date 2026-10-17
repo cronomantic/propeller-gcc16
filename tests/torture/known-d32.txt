@@ -1,0 +1,10 @@
+# What is expected not to pass with --doubles 32 (-m32bit-doubles,
+# propgcc's default: double is float), on top of known.txt.
+#
+#   TEST  STATUS  [MODELS|*]  [OPTS|*]  # why
+#
+# Their test data are double constants beyond float's range (as small as
+# 0x1p-900) without asking for a 64-bit double: they underflow to 0.
+# GCC leaves them out on AVR, whose double is a float too.
+ieee/cdivchkd   FAIL  *  *  # data beyond float's range
+ieee/cdivchkld  FAIL  *  *  # data beyond float's range

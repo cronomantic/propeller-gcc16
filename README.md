@@ -132,7 +132,9 @@ nested functions in CMM) or are too slow for the time limit, mostly at
 `-O0` from external memory (they pass with a longer `--seconds`).
 `ieee` passes in full everywhere, `builtins` too apart from what does not
 fit in LMM and object-size checks too slow for the limit from external
-memory.  The whole matrix takes about 25 minutes on 8 cores.
+memory.  `--doubles 32` runs them with `-m32bit-doubles`, propgcc's
+default (results apart, and `known-d32.txt` on top of `known.txt`): the
+same, less two `ieee` tests whose data are beyond `float`'s range.  The whole matrix takes about 25 minutes on 8 cores.
 
 ## Continuous integration and binaries
 

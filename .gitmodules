@@ -5,7 +5,8 @@
 #   proplib             <- totalspectrum/proplib (branch propgcc16: printf
 #                          "%.0f", realloc shrinking, aligned_alloc)
 #   propeller-load      <- dbetz/propeller-load (branch propgcc16: XMM images
-#                          zero a .bss of its own)
+#                          zero a .bss of its own; a hub image must leave
+#                          room for the Spin boot stack)
 #   OpenSpin            <- parallaxinc/OpenSpin (branch propgcc16: a fix for
 #                          the include path on Windows)
 [submodule "deps/binutils-propeller"]

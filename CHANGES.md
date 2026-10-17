@@ -313,6 +313,14 @@ Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
   keeps `.bss` out of the `.data` segment, it fell between the two.  It
   now gets a zeroing entry in the init table.  Five torture tests failed
   and two hung on it in XMM single once objects could be aligned to 8.
+* **A hub program within 24 bytes of the end of hub RAM hung before it
+  started** (`strlen-5.c` in CMM at `-O2` with 32-bit doubles, whose
+  image was exactly 32 KB).  The Spin interpreter that starts it puts its
+  stack right after the image; the linker only checks that the image
+  fits, and the loader put that stack in ROM, where the `coginit` that
+  starts the kernel lost its arguments.  `propeller-load`
+  (`deps/propeller-load`, branch `propgcc16`) now says the program does
+  not fit.
 * **`printf("%.0f", 5.0)` printed `5.`** (`930513-1.c`): the C library's
   float formatter always put the radix point after the integer digit.  It
   now does only when digits follow or with `#` (in `deps/proplib`, branch

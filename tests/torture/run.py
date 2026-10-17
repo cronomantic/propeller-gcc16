@@ -35,6 +35,9 @@ Usage:
   --suite: execute/ (default), execute/ieee or execute/builtins, with what
   their .exp adds (see SUITES); their tests' .x scripts are read too, and
   their results go to OUT/SUITE/MODEL-OPT, named SUITE/TEST.
+  --doubles 32: with -m32bit-doubles (double is float, propgcc's default)
+  instead of -m64bit-doubles; results in OUT/d32/..., and known-d32.txt
+  is read too.
   --model and --opt take comma-separated lists (--opt=-O0,-Os: with "=",
   or the list is taken for an option); tests are names without
   .c (shell patterns allowed); --src is the GCC source tree (default:
@@ -57,6 +60,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 TRIPLET = "propeller-unknown-elf"
 CC = "propeller-elf-gcc"
+# -m64bit-doubles unless --doubles 32 (main() sets the first element)
 BASE_FLAGS = ["-m64bit-doubles", "-w", "-fno-diagnostics-color"]
 # The stack the tests may count on: dg-add-options stack_size defines
 # STACK_SIZE (the tests then scale their arrays), dg-require-stack-size
@@ -409,7 +413,7 @@ def run_one(path, model, opt, exit_obj, args, logdir):
             sram = ["--spi-sram", elf[:-4] + ".xmm"]
         if r.returncode:
             log.append(r.stdout + r.stderr)
-            if "do not fit" in r.stdout + r.stderr:
+            if "not fit" in r.stdout + r.stderr:
                 return name, "NOFIT", "external image too big"
             return finish(name, "CE", "image: " + first_line(r.stdout + r.stderr, ""), log, logdir)
         secs = args.seconds * factor * (1 if model in ("lmm", "cmm") else XMEM_FACTOR)
@@ -486,7 +490,14 @@ def main():
     ap.add_argument("--known", default=os.path.join(HERE, "known.txt"))
     ap.add_argument("--seconds", type=float, default=20)
     ap.add_argument("--suite", default="execute", choices=sorted(SUITES))
+    ap.add_argument("--doubles", default="64", choices=("32", "64"),
+                    help="size of double: 64 (-m64bit-doubles) or 32 (propgcc's default)")
     args = ap.parse_args()
+    if args.doubles == "32":
+        # double is float: what needs a 64-bit double is not there
+        BASE_FLAGS[0] = "-m32bit-doubles"
+        TARGET.update({"double64": False, "double64plus": False, "large_double": False})
+        args.out = os.path.join(args.out, "d32")
 
     tdir = os.path.join(args.src, "gcc", "testsuite", "gcc.c-torture", "execute",
                         SUITES[args.suite]["dir"])
@@ -499,6 +510,8 @@ def main():
     if not os.path.exists(args.p1run) and os.path.exists(args.p1run + ".exe"):
         args.p1run += ".exe"
     known = load_known(args.known)
+    if args.doubles == "32":
+        known += load_known(os.path.join(os.path.dirname(args.known), "known-d32.txt"))
 
     bad = 0
     for model in args.model.split(","):
@@ -509,8 +522,8 @@ def main():
             shutil.rmtree(cfg, ignore_errors=True)
             os.makedirs(logdir)
             exit_obj = os.path.join(cfg, "exit.o")
-            subprocess.run([CC, opt, "-m" + model, "-c", "-o", exit_obj, os.path.join(HERE, "exit.c")],
-                           check=True)
+            subprocess.run([CC, opt, "-m" + model, BASE_FLAGS[0], "-c", "-o", exit_obj,
+                            os.path.join(HERE, "exit.c")], check=True)
             with concurrent.futures.ThreadPoolExecutor(args.j) as pool:
                 jobs = [pool.submit(run_one, p, model, opt, exit_obj, args, logdir) for p in paths]
                 results = [j.result() for j in jobs]
