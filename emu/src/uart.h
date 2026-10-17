@@ -21,6 +21,9 @@ public:
     void flush(uint64_t t);
     // Characters received since the last call (for live output).
     const char *take(int *count);
+    // The pin hook attach() installs; a program that watches other pins
+    // too installs its own and calls this one from it (ctx: the Uart).
+    static void onPins(P1 &chip, uint64_t when, void *ctx);
 
 private:
     P1 *chip;
@@ -34,5 +37,4 @@ private:
     int taken;
 
     void update(bool newLevel, uint64_t t);
-    static void onPins(P1 &chip, uint64_t when, void *ctx);
 };

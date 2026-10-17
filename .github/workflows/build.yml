@@ -1,5 +1,5 @@
 # Build propgcc-16 on Linux and Windows (MSYS2 UCRT64), run tests/run.sh
-# (the hub-memory builds in emu/'s Propeller emulator), and keep the
+# (every memory model, in emu/'s Propeller emulator), and keep the
 # installed toolchains as artifacts.  A tag v* publishes them as a release.
 name: build
 
@@ -80,7 +80,7 @@ jobs:
           msystem: UCRT64
           update: true
           install: >-
-            make flex bison texinfo patch tar xz diffutils curl zip
+            make flex bison texinfo patch tar xz diffutils curl zip python
             mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-gmp
             mingw-w64-ucrt-x86_64-mpfr mingw-w64-ucrt-x86_64-mpc
 

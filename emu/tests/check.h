@@ -18,3 +18,4 @@ extern int failures;
 
 void runP1Tests();
 void runCounterTests();
+void runSpiSramTests();

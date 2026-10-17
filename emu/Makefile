@@ -18,8 +18,8 @@ ifeq ($(OS),Windows_NT)
   LDFLAGS += -static
 endif
 
-CORE  := p1 uart
-TESTS := test_main test_p1 test_ctr
+CORE  := p1 uart spisram
+TESTS := test_main test_p1 test_ctr test_spisram
 
 all: $(BUILD)/p1run$(EXE)
 

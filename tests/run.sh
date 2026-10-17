@@ -2,10 +2,11 @@
 # tests/run.sh -- compile and link the tests in every memory model with the
 # installed toolchain (propeller-elf-gcc on PATH) at -O2 and -Os.
 #
-# With P1RUN set to a Propeller 1 emulator that runs a Spin .binary and
-# prints its serial output (emu/'s p1run: "make -C emu" builds
-# emu/build/p1run), the hub-memory builds (LMM, CMM) are also run and must
-# print their "passed" line.
+# With P1RUN set to emu/'s Propeller 1 emulator ("make -C emu" builds
+# emu/build/p1run), every build is also run and must print its "passed"
+# line: LMM and CMM from hub RAM, XMMC and the XMM models from an emulated
+# SPI SRAM (tests/xmm/mkxmm.py makes the image and the boot program; it
+# needs python3, and the openspin the toolchain installs).
 #
 #   tests/run.sh
 #   make -C emu && P1RUN=emu/build/p1run tests/run.sh
@@ -35,16 +36,24 @@ done
 if [ -n "${P1RUN:-}" ]; then
     for t in bench regress; do
         for opt in -O2 -Os; do
-            for m in lmm cmm; do
+            for m in $MODELS; do
                 elf=$OUT/$t$opt-$m.elf
                 [ -f "$elf" ] || continue
-                (cd "$OUT" && propeller-load -s "$elf" > /dev/null 2>&1)
                 bin=${elf%.elf}.binary
-                out=$("$P1RUN" "$bin" --baud 115200 --seconds 20 --until passed 2> /dev/null)
+                case $m in
+                    lmm|cmm)
+                        (cd "$OUT" && propeller-load -s "$elf" > /dev/null 2>&1)
+                        sram=() ;;
+                    *)
+                        python3 "$HERE/xmm/mkxmm.py" "$elf" > /dev/null || { fails=$((fails + 1)); continue; }
+                        sram=(--spi-sram "${elf%.elf}.xmm") ;;
+                esac
+                out=$("$P1RUN" "$bin" "${sram[@]}" --baud 115200 --seconds 30 --until passed 2> /dev/null |
+                      tr -d '\r\0')
                 if grep -q "passed" <<< "$out"; then
-                    printf '  run %-8s %-3s %-4s %s\n' "$t" "$opt" "$m" "$(head -n1 <<< "$out" | tr -d '\r')"
+                    printf '  run %-8s %-3s %-11s %s\n' "$t" "$opt" "$m" "$(head -n1 <<< "$out")"
                 else
-                    printf '  run %-8s %-3s %-4s FAILED\n' "$t" "$opt" "$m"
+                    printf '  run %-8s %-3s %-11s FAILED\n' "$t" "$opt" "$m"
                     sed 's/^/      /' <<< "$out"
                     fails=$((fails + 1))
                 fi

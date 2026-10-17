@@ -37,7 +37,8 @@ This fork keeps the toolchain buildable and maintainable on its own:
 | `deps/OpenSpin` | The Spin compiler, used by the loader (Parallax, 2018) |
 | `build.sh` | Builds and installs the whole toolchain |
 | `tests/` | `run.sh`: every test in every memory model, run in an emulator if one is given |
-| `emu/` | A Propeller 1 emulator (`p1run`) and the P1 ROM, to run the tests |
+| `tests/xmm/` | What runs the external-memory builds: image builder, boot program, SPI SRAM driver |
+| `emu/` | A Propeller 1 emulator (`p1run`) with an SPI SRAM, and the P1 ROM, to run the tests |
 | `CHANGES.md` | The port's changes against propgcc's GCC 6 back end |
 
 ## Building
@@ -76,8 +77,7 @@ propgcc.
 
 compiles and links `tests/bench.c` and `tests/regress.c` at `-O2` and
 `-Os` in the LMM, CMM, XMMC, XMM single, XMM split and XMM models.  With
-an emulator that runs a Spin `.binary` and prints its serial output, the
-hub-memory builds are run too and must report success:
+the emulator of `emu/`, every build is run too and must report success:
 
     make -C emu
     P1RUN=emu/build/p1run tests/run.sh
@@ -87,7 +87,19 @@ instruction with the chip's timing, the hub, the counters, and the ROM
 (Parallax's, GPL-3.0, from its Verilog release: see `emu/rom/README.md`).
 `p1run` boots a `.binary` as the chip does and prints what the program
 sends on P30; `make -C emu test` checks the emulator against instruction
-vectors generated with spinsim.  `regress.c` checks the code generation
+vectors generated with spinsim.
+
+The external-memory builds (XMMC, XMM single, XMM split, XMM) run from
+a 23LC1024 SPI SRAM that `p1run --spi-sram` puts on P0-P3 (/CS, SCK,
+SI, SO).  `tests/xmm/mkxmm.py` turns the `.elf` into the SRAM image, as
+propeller-load lays it out, and a boot program that starts the external
+memory driver and the program's XMM kernel, as propeller-load's
+`flash_loader2.spin` does.  The driver, `tests/xmm/sram_xmem.spin`, is
+propeller-load's `spi_sram24_xmem.spin` with two changes: the kernel's
+RAM space ($20000000) goes after the image, so that XMM and XMM split,
+which use both spaces, do not write their data over their code; and /CS
+rises after the mode register is written (the original leaves it low, and
+the chip then ignores the first transfer).  `regress.c` checks the code generation
 bugs that `CHANGES.md` lists as fixed (64-bit division, `float` to `double`, `__builtin_ctz`,
 the new MOVS/MOVD/MOVI and ADDS/SUBS patterns).
 
@@ -95,8 +107,7 @@ the new MOVS/MOVD/MOVI and ADDS/SUBS patterns).
 
 `.github/workflows/build.yml` builds the toolchain on Linux (Ubuntu
 24.04) and on Windows (MSYS2 UCRT64) on every push and pull request,
-and runs `tests/run.sh` with `emu/`'s emulator (the external-memory
-builds are compiled and linked only).  Each run keeps the installed toolchain as an
+and runs `tests/run.sh` with `emu/`'s emulator.  Each run keeps the installed toolchain as an
 artifact (`propgcc-16-linux-x86_64.tar.xz`,
 `propgcc-16-windows-x86_64.zip`, with the UCRT64 runtime DLLs next to the
 programs).  Pushing a tag `v*` also publishes them as a GitHub release.

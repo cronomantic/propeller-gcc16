@@ -4,20 +4,34 @@
 // what it sends on its serial port (P30), like spinsim -b.
 //
 //   p1run program.binary [--baud 115200] [--seconds 10] [--rom path] [--until text]
+//         [--spi-sram image]
 //
 // The program boots as on the chip (ROM boot loader steps, then the Spin
 // interpreter from the ROM).  It stops when every cog has stopped, when
 // its output contains the --until text, or after the given time, counted
 // at the program's own clkfreq (long 0 of the image; 80 MHz if it is 0).
 // The ROM comes from --rom, $P1ROM, or ../rom/p1rom.bin next to the
-// program (emu/rom/p1rom.bin, see emu/rom/README.md).
+// program (emu/rom/p1rom.bin, see emu/rom/README.md).  --spi-sram puts a
+// 23LC1024 SPI SRAM on P0 (/CS), P1 (SCK), P2 (SI) and P3 (SO), loaded
+// with the image from address 0: the external memory of the XMM tests
+// (tests/xmm).
 // Exit status: 0, 1 for a usage or file error, 2 if --until was given
 // and its text never came.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include "p1.h"
+#include "spisram.h"
 #include "uart.h"
+
+static Uart uart;
+static SpiSram sram;
+
+static void onPins(P1 &chip, uint64_t when, void *)
+{
+    Uart::onPins(chip, when, &uart);
+    sram.pins(chip, when);
+}
 
 static bool loadRom(P1 &chip, const char *path, const char *argv0)
 {
@@ -39,7 +53,7 @@ static bool loadRom(P1 &chip, const char *path, const char *argv0)
 
 int main(int argc, char *argv[])
 {
-    const char *program = nullptr, *rom = nullptr, *until = nullptr;
+    const char *program = nullptr, *rom = nullptr, *until = nullptr, *sramImage = nullptr;
     uint32_t baud = 115200;
     double seconds = 10.0;
     for (int i = 1; i < argc; i++) {
@@ -51,6 +65,8 @@ int main(int argc, char *argv[])
             rom = argv[++i];
         else if (!strcmp(argv[i], "--until") && i + 1 < argc)
             until = argv[++i];
+        else if (!strcmp(argv[i], "--spi-sram") && i + 1 < argc)
+            sramImage = argv[++i];
         else if (argv[i][0] != '-' && !program)
             program = argv[i];
         else {
@@ -60,7 +76,7 @@ int main(int argc, char *argv[])
     }
     if (!program) {
         fprintf(stderr, "usage: p1run program.binary [--baud 115200] [--seconds 10] [--rom path] "
-                        "[--until text]\n");
+                        "[--until text] [--spi-sram image]\n");
         return 1;
     }
 
@@ -77,8 +93,16 @@ int main(int argc, char *argv[])
     if (!clkfreq)
         clkfreq = 80000000;
 
-    static Uart uart;
     uart.attach(chip, 30, clkfreq, baud);
+    if (sramImage) {
+        if (!sram.load(sramImage)) {
+            fprintf(stderr, "cannot load %s into the %u KB SPI SRAM\n", sramImage,
+                    SpiSram::SIZE / 1024);
+            return 1;
+        }
+        sram.attach(chip, 0, 1, 2, 3);
+        chip.pinHook = onPins;
+    }
 
     uint64_t end = (uint64_t)(seconds * clkfreq);
     uint64_t step = clkfreq / 1000;             // 1 ms

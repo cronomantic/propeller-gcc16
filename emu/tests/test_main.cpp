@@ -10,6 +10,7 @@ int main()
 {
     runP1Tests();
     runCounterTests();
+    runSpiSramTests();
     printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }
