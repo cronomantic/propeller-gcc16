@@ -88,6 +88,10 @@ def external_image(elf):
         if paddr >= base:
             if filesz and paddr + memsz > end:
                 end = paddr + memsz
+            elif not filesz and memsz:
+                # a .bss of its own (an alignment gap kept it out of the
+                # .data segment): outside the image, so zeroed at start-up
+                inits.append((paddr, None, memsz))
         else:
             if filesz:
                 inits.append((paddr, elf.segment_bytes(p), filesz))

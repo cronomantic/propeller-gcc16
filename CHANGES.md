@@ -272,6 +272,30 @@ Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
   below, in `Alo`, now set the sticky bit, so that doubles just above a
   halfway point round up.  At `-O2` most such conversions of constants
   are done by the compiler, which hid it.
+* **Global and static variables could not be aligned to more than 4
+  bytes** (`aligned(8)`, `_Alignas(16)`, a struct with such a member:
+  "alignment ... is greater than maximum object file alignment 4", ten
+  torture tests).  `MAX_OFILE_ALIGNMENT` was left at `BIGGEST_ALIGNMENT`;
+  it is now the size of hub RAM, 32 KB, since the assembler and the
+  linker honour `.balign` and the alignment of `.comm`.  `-mpasm` keeps
+  the old limit, having no alignment directive.  Locals were already
+  aligned (GCC realigns them in the frame).  `malloc` returns memory
+  aligned to 4, which is all C asks of it here (`max_align_t`); for more,
+  the C library now has `aligned_alloc` (C11; in `deps/proplib`).
+* **`realloc` corrupted the heap when it shrank a block**: it freed the
+  tail but left the block's length as the tail's, so the block overlapped
+  memory it had just freed and later allocations were given part of it
+  (in `deps/proplib`).  Found while adding `aligned_alloc`;
+  `tests/heap.c` checks both.
+* **In XMM single, a `.bss` with a segment of its own was never
+  cleared**, and the image's hub data and init table were written over
+  it.  The loader (`deps/propeller-load`, branch `propgcc16`) put into
+  the external image only the segments above the program header that
+  have contents, and zeroed only the `.bss` of those below it.  As soon
+  as an alignment gap (an 8-aligned `.bss` after a `.data` ending on 4)
+  keeps `.bss` out of the `.data` segment, it fell between the two.  It
+  now gets a zeroing entry in the init table.  Five torture tests failed
+  and two hung on it in XMM single once objects could be aligned to 8.
 * **`printf("%.0f", 5.0)` printed `5.`** (`930513-1.c`): the C library's
   float formatter always put the radix point after the integer digit.  It
   now does only when digits follow or with `#` (in `deps/proplib`, branch

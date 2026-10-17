@@ -1,6 +1,9 @@
 # Build propgcc-16 on Linux and Windows (MSYS2 UCRT64), run tests/run.sh
 # (every memory model, in emu/'s Propeller emulator), and keep the
-# installed toolchains as artifacts.  A tag v* publishes them as a release.
+# installed toolchains as artifacts.  A tag v* publishes the Windows one as
+# a release, with its SHA-256: the Linux build needs the system's GMP, MPFR
+# and MPC and a glibc as new as the runner's, so on Linux build.sh is the
+# way to install it.
 name: build
 
 on:
@@ -134,9 +137,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
+          name: propgcc-16-windows-x86_64
           path: dist
-          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum propgcc-16-windows-x86_64.zip > SHA256SUMS
 
       - uses: softprops/action-gh-release@v3
         with:
-          files: dist/*
+          files: |
+            dist/propgcc-16-windows-x86_64.zip
+            dist/SHA256SUMS

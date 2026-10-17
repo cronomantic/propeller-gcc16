@@ -158,6 +158,15 @@ do {                                                    \
 
 #define BIGGEST_ALIGNMENT 32
 
+/* Objects may ask for more alignment than any type needs (aligned(8),
+   _Alignas(16)...): the assembler and the linker honour .balign and the
+   alignment of .comm, so allow up to the size of hub RAM.  PASM output
+   (-mpasm) has no alignment directive, only long and byte, so it keeps
+   the natural limit and such objects stay an error there.  Without this
+   the limit was BIGGEST_ALIGNMENT, 4 bytes, and a global or static
+   variable aligned to more did not compile.  */
+#define MAX_OFILE_ALIGNMENT (TARGET_PASM ? BIGGEST_ALIGNMENT : 32768 * BITS_PER_UNIT)
+
 #define FUNCTION_BOUNDARY  (TARGET_CMM ? 8 : 32)
 
 #define EMPTY_FIELD_BOUNDARY 32

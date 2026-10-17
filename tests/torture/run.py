@@ -29,9 +29,12 @@ evaluated for propeller-unknown-elf with the effective targets of
 TARGET below.
 
 Usage:
-  tests/torture/run.py [--model lmm] [--opt=-O2] [-j N] [--src DIR]
-                       [--p1run emu/build/p1run] [--out DIR] [--known FILE]
-                       [--seconds 20] [tests...]
+  tests/torture/run.py [--suite execute|ieee|builtins] [--model lmm] [--opt=-O2]
+                       [-j N] [--src DIR] [--p1run emu/build/p1run] [--out DIR]
+                       [--known FILE] [--seconds 20] [tests...]
+  --suite: execute/ (default), execute/ieee or execute/builtins, with what
+  their .exp adds (see SUITES); their tests' .x scripts are read too, and
+  their results go to OUT/SUITE/MODEL-OPT, named SUITE/TEST.
   --model and --opt take comma-separated lists (--opt=-O0,-Os: with "=",
   or the list is taken for an option); tests are names without
   .c (shell patterns allowed); --src is the GCC source tree (default:
@@ -241,19 +244,138 @@ def plan(path, flags):
     return None, extra, xfail, factor, compile_only, ""
 
 
+# --- .x files ----------------------------------------------------------------
+#
+# The ieee and builtins tests still have the old torture driver's Tcl
+# scripts next to them (TEST.x).  What they do is small: add options
+# (lappend additional_flags), leave the test out on some targets
+# (return 1), mark it as expected to fail (set torture_execute_xfail),
+# under if/elseif/else on istarget, check_effective_target_* and string
+# match on the options.  That much is evaluated here; anything else is
+# ignored.
+
+def tcl_commands(script):
+    """Split a Tcl script into commands: lines, joined while braces are
+    open; comments dropped."""
+    cmds, cur, depth = [], "", 0
+    for line in script.splitlines():
+        if depth == 0 and line.strip().startswith("#"):
+            continue
+        cur += line + "\n"
+        depth += line.count("{") - line.count("}")
+        if depth <= 0:
+            if cur.strip():
+                cmds.append(cur.strip())
+            cur, depth = "", 0
+    if cur.strip():
+        cmds.append(cur.strip())
+    return cmds
+
+
+def x_condition(cond, flags):
+    def command(m):
+        words = [w[1] for w in tcl_words(m.group(1))]
+        if not words:
+            return "0"
+        if words[0] == "istarget" and len(words) > 1:
+            return "1" if fnmatch.fnmatchcase(TRIPLET, words[1]) else "0"
+        if words[0].startswith("check_effective_target_"):
+            t = words[0][len("check_effective_target_"):]
+            if t not in TARGET:
+                unknown_targets.add(t)
+            return "1" if TARGET.get(t, False) else "0"
+        if words[:2] == ["string", "match"] and len(words) > 3:
+            return "1" if fnmatch.fnmatchcase(" ".join(flags), words[2]) else "0"
+        return "0"
+    expr = re.sub(r"\[([^\[\]]*)\]", command, cond)
+    expr = expr.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+    try:
+        return bool(eval(expr, {"__builtins__": {}}))
+    except Exception:
+        return False
+
+
+def x_eval(script, flags, state):
+    """Run the commands of a .x script; state: extra flags, xfail, and the
+    value of return (None while it has not returned)."""
+    for cmd in tcl_commands(script):
+        words = tcl_words(cmd)
+        head = words[0][1] if words else ""
+        if head == "if":
+            i = 1
+            while i + 1 < len(words):
+                if x_condition(words[i][1], flags):
+                    x_eval(words[i + 1][1], flags, state)
+                    break
+                i += 2
+                if i < len(words) and words[i][1] == "elseif":
+                    i += 1
+                elif i + 1 < len(words) and words[i][1] == "else":
+                    x_eval(words[i + 1][1], flags, state)
+                    break
+                else:
+                    break
+        elif head == "lappend" and len(words) > 2 and words[1][1] == "additional_flags":
+            for w in words[2:]:
+                state["flags"] += shlex.split(w[1])
+        elif head == "set" and len(words) > 2 and words[1][1] == "torture_execute_xfail":
+            state["xfail"] = True
+        elif head == "return":
+            state["ret"] = int(words[1][1]) if len(words) > 1 and words[1][1].isdigit() else 0
+        if state["ret"] is not None:
+            return
+
+
+def x_file(path, flags):
+    """(skip, extra flags, xfail) from TEST.x next to TEST.c, if any."""
+    x = path[:-2] + ".x"
+    state = {"flags": [], "xfail": False, "ret": None}
+    if os.path.exists(x):
+        x_eval(open(x, encoding="utf-8", errors="replace").read(), flags, state)
+    return state["ret"] == 1, state["flags"], state["xfail"]
+
+
+# The test directories: where they are, what their .exp adds to every
+# test, and what else each test is linked with.
+SUITES = {
+    "execute": {"dir": "", "flags": []},
+    # ieee.exp: -fno-inline, and SIGNAL_SUPPRESS where there is no signal()
+    "ieee": {"dir": "ieee", "flags": ["-fno-inline", "-DSIGNAL_SUPPRESS"]},
+    # builtins.exp: each TEST.c with TEST-lib.c (its own versions of the
+    # library functions, which check they are called only when they
+    # should be) and lib/main.c (main calls main_test); the library's own
+    # copies are overridden with --allow-multiple-definition
+    "builtins": {"dir": "builtins",
+                 "flags": ["-fno-tree-dse", "-fno-tree-loop-distribute-patterns", "-fno-tracer",
+                           "-fno-ipa-ra", "-fno-inline-functions",
+                           "-Wl,--allow-multiple-definition"],
+                 "with": lambda path: [path[:-2] + "-lib.c",
+                                       os.path.join(os.path.dirname(path), "lib", "main.c")]},
+}
+
+
 # --- running ---------------------------------------------------------------
 
 def run_one(path, model, opt, exit_obj, args, logdir):
     name = os.path.splitext(os.path.basename(path))[0]
-    flags = [opt, "-m" + model] + BASE_FLAGS
+    if args.suite != "execute":
+        name = args.suite + "/" + name
+    suite = SUITES[args.suite]
+    flags = [opt, "-m" + model] + BASE_FLAGS + suite["flags"]
     status, extra, xfail, factor, compile_only, reason = plan(path, flags)
     if status:
         return name, status, reason
+    skip, x_flags, x_xfail = x_file(path, flags)
+    if skip:
+        return name, "UNSUPPORTED", "its .x leaves it out"
+    extra += x_flags
+    xfail = xfail or x_xfail
+    sources = [path] + (suite["with"](path) if "with" in suite else [])
     tmp = tempfile.mkdtemp(prefix="torture-")
     log = []
     try:
-        elf = os.path.join(tmp, name + ".elf")
-        cmd = [CC] + flags + extra + [path]
+        elf = os.path.join(tmp, os.path.basename(path)[:-2] + ".elf")
+        cmd = [CC] + flags + extra + sources
         cmd += ["-c", "-o", elf] if compile_only else [exit_obj, "-lm", "-o", elf]
         log.append("$ " + " ".join(shlex.quote(c) for c in cmd))
         try:
@@ -319,7 +441,7 @@ def first_line(text, key):
 
 
 def finish(name, status, reason, log, logdir):
-    with open(os.path.join(logdir, name + ".log"), "w", encoding="utf-8") as f:
+    with open(os.path.join(logdir, os.path.basename(name) + ".log"), "w", encoding="utf-8") as f:
         f.write("\n".join(log))
     return name, status, reason
 
@@ -356,10 +478,12 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "work", "torture"))
     ap.add_argument("--known", default=os.path.join(HERE, "known.txt"))
     ap.add_argument("--seconds", type=float, default=20)
+    ap.add_argument("--suite", default="execute", choices=sorted(SUITES))
     args = ap.parse_args()
 
-    tdir = os.path.join(args.src, "gcc", "testsuite", "gcc.c-torture", "execute")
-    paths = sorted(glob.glob(os.path.join(tdir, "*.c")))
+    tdir = os.path.join(args.src, "gcc", "testsuite", "gcc.c-torture", "execute",
+                        SUITES[args.suite]["dir"])
+    paths = sorted(p for p in glob.glob(os.path.join(tdir, "*.c")) if not p.endswith("-lib.c"))
     if not paths:
         sys.exit("no tests in %s (--src: the GCC 16.2.0 source tree)" % tdir)
     if args.tests:
@@ -372,7 +496,8 @@ def main():
     bad = 0
     for model in args.model.split(","):
         for opt in args.opt.split(","):
-            cfg = os.path.join(args.out, model + opt)
+            cfg = os.path.join(args.out, *([] if args.suite == "execute" else [args.suite]),
+                               model + opt)
             logdir = os.path.join(cfg, "logs")
             shutil.rmtree(cfg, ignore_errors=True)
             os.makedirs(logdir)
@@ -393,9 +518,9 @@ def main():
             summary = "  ".join("%s %d" % (s, counts[s]) for s in
                                 ("PASS", "FAIL", "TIMEOUT", "ICE", "CE", "NOFIT", "UNSUPPORTED",
                                  "XFAIL", "XPASS") if s in counts)
-            print("%-14s %s" % (model + " " + opt, summary))
+            print("%-14s %s" % (model + " " + opt, summary), flush=True)
             for name, status, reason in new:
-                print("  new %-8s %-24s %s" % (status, name, reason))
+                print("  new %-8s %-24s %s" % (status, name, reason), flush=True)
             bad += len(new)
     if unknown_targets:
         print("effective targets not in TARGET (taken as false): " + " ".join(sorted(unknown_targets)))

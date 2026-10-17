@@ -125,6 +125,11 @@ cp OpenSpin/build/openspin* "$PREFIX/bin/"             # openspin.exe on Windows
 rm -rf propeller-load build-loader && cp -a "$ROOT/deps/propeller-load" propeller-load
 run loader-make.log make -C propeller-load OS="$LOADER_OS" TARGET="$PREFIX" BUILDROOT="$WORK/build-loader"
 run loader-install.log make -C propeller-load OS="$LOADER_OS" TARGET="$PREFIX" BUILDROOT="$WORK/build-loader" install
+# The loader installs its external memory drivers compiled (.dat); their
+# Spin sources go next to them, for boot programs that include a driver
+# (xmem_common.spin and the SPI and SQI code: tests/xmm, PropDuo's mkxmmc.py)
+mkdir -p "$PREFIX/propeller-load/xmem-drivers"
+cp "$ROOT"/deps/propeller-load/xmem-drivers/*.spin "$PREFIX/propeller-load/xmem-drivers/"
 if [ "${KEEP_DEBUG:-0}" != 1 ]; then
     step "host programs without debug information"
     # gcc's were installed stripped; binutils', OpenSpin and the loader are

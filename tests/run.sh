@@ -18,7 +18,7 @@ OUT=$(mktemp -d)
 MODELS="lmm cmm xmmc xmm-single xmm-split xmm"
 fails=0
 
-for t in bench regress; do
+for t in bench regress align heap; do
     for opt in -O2 -Os; do
         for m in $MODELS; do
             elf=$OUT/$t$opt-$m.elf
@@ -34,7 +34,7 @@ for t in bench regress; do
 done
 
 if [ -n "${P1RUN:-}" ]; then
-    for t in bench regress; do
+    for t in bench regress align heap; do
         for opt in -O2 -Os; do
             for m in $MODELS; do
                 elf=$OUT/$t$opt-$m.elf
