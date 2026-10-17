@@ -46,6 +46,9 @@ jobs:
       - name: Test
         run: PATH=$RUNNER_TEMP/propgcc-16/bin:$PATH P1RUN=emu/build/p1run tests/run.sh
 
+      - name: GCC torture tests (LMM -O2)
+        run: PATH=$RUNNER_TEMP/propgcc-16/bin:$PATH tests/torture/run.py -j $(nproc)
+
       - name: Package
         run: tar -C "$RUNNER_TEMP" -cJf propgcc-16-linux-x86_64.tar.xz propgcc-16
 
@@ -58,7 +61,9 @@ jobs:
         if: failure()
         with:
           name: logs-linux
-          path: work/logs
+          path: |
+            work/logs
+            work/torture
 
   windows:
     runs-on: windows-2022

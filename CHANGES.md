@@ -246,3 +246,23 @@ Neither is my work; both are noted here for provenance.
   the allocator spilling instead, which is worse.
 * The C++ compiler is not built; this is a C toolchain.
 * Propeller 2 is not supported, exactly as before.
+
+---
+
+## 7. Fixed since the import (cronomantic/propeller-gcc16)
+
+Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
+(`tests/torture`):
+
+* **`__builtin_setjmp` receivers read their locals at the wrong address
+  after an `alloca`** (`built-in-setjmp.c`, LMM `-O2`).  Without a frame
+  pointer, locals are addressed from `sp` with the offset the register
+  allocator tracks through the function; the receiver is reached only by
+  the jump, which restores `sp` as it was at the setjmp, while the
+  allocator took the offset at the label from the function's start.  A
+  function with a non-local label now keeps its frame pointer
+  (`TARGET_FRAME_POINTER_REQUIRED`), which the jump restores.
+* **`printf("%.0f", 5.0)` printed `5.`** (`930513-1.c`): the C library's
+  float formatter always put the radix point after the integer digit.  It
+  now does only when digits follow or with `#` (in `deps/proplib`, branch
+  `propgcc16`).

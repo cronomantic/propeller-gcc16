@@ -38,6 +38,7 @@ This fork keeps the toolchain buildable and maintainable on its own:
 | `build.sh` | Builds and installs the whole toolchain |
 | `tests/` | `run.sh`: every test in every memory model, run in an emulator if one is given |
 | `tests/xmm/` | What runs the external-memory builds: image builder, boot program, SPI SRAM driver |
+| `tests/torture/` | `run.py`: GCC's own `gcc.c-torture/execute` tests in the emulator |
 | `emu/` | A Propeller 1 emulator (`p1run`) with an SPI SRAM, and the P1 ROM, to run the tests |
 | `CHANGES.md` | The port's changes against propgcc's GCC 6 back end |
 
@@ -103,11 +104,28 @@ the chip then ignores the first transfer).  `regress.c` checks the code generati
 bugs that `CHANGES.md` lists as fixed (64-bit division, `float` to `double`, `__builtin_ctz`,
 the new MOVS/MOVD/MOVI and ADDS/SUBS patterns).
 
+### GCC's torture tests
+
+    tests/torture/run.py --model lmm,xmmc --opt -O2,-Os -j 8
+
+runs GCC's `gcc.c-torture/execute` tests (1,692 self-checking programs,
+from the GCC sources that `build.sh` unpacks into `work/`) in the
+emulator: each is compiled for the model and level, linked with
+`tests/torture/exit.c` (so `exit` and `abort` end with propgcc's serial
+exit sequence, which `p1run` turns into its exit status) and run.  The
+tests' DejaGnu directives (`dg-options`, `dg-require-effective-target`,
+`dg-skip-if`...) are honoured; results and logs go to `work/torture`.
+`tests/torture/known.txt` lists what is expected not to pass, with the
+reason; the run fails on anything else.  In LMM at `-O2`: 1,654 pass, 6
+do not fit in hub RAM, 21 need what the target lacks, and 11 are known
+limitations (alignments above 4 bytes, `__int128`).
+
 ## Continuous integration and binaries
 
 `.github/workflows/build.yml` builds the toolchain on Linux (Ubuntu
 24.04) and on Windows (MSYS2 UCRT64) on every push and pull request,
-and runs `tests/run.sh` with `emu/`'s emulator.  Each run keeps the installed toolchain as an
+and runs `tests/run.sh` with `emu/`'s emulator; on Linux, also the
+torture tests in LMM at `-O2`.  Each run keeps the installed toolchain as an
 artifact (`propgcc-16-linux-x86_64.tar.xz`,
 `propgcc-16-windows-x86_64.zip`, with the UCRT64 runtime DLLs next to the
 programs).  Pushing a tag `v*` also publishes them as a GitHub release.

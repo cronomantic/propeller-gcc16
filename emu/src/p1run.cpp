@@ -15,8 +15,14 @@
 // 23LC1024 SPI SRAM on P0 (/CS), P1 (SCK), P2 (SI) and P3 (SO), loaded
 // with the image from address 0: the external memory of the XMM tests
 // (tests/xmm).
-// Exit status: 0, 1 for a usage or file error, 2 if --until was given
-// and its text never came.
+//
+// A program linked with propgcc's serial exit hook (or its own _ExitHook)
+// ends by sending $FF $00 and its exit status, the sequence propeller-load
+// watches for: p1run stops there and does not print it.
+// Exit status: the program's, when it sent that sequence; else 0, or 2 if
+// --until was given and its text never came; 1 for a usage or file error.
+// The last line on stderr says which ("exit N", "text found", "time
+// limit", "all cogs stopped").
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -26,11 +32,36 @@
 
 static Uart uart;
 static SpiSram sram;
+static int shown;               // bytes of uart.text copied to stdout
+static int exitCode = -1;       // from the exit sequence
 
 static void onPins(P1 &chip, uint64_t when, void *)
 {
     Uart::onPins(chip, when, &uart);
     sram.pins(chip, when);
+}
+
+// Copy what came since the last call to stdout, up to the exit sequence
+// (held back while it may still be arriving).
+static void output()
+{
+    while (shown < uart.length && exitCode < 0) {
+        unsigned char c = (unsigned char)uart.text[shown];
+        if (c == 0xFF) {
+            if (shown + 1 >= uart.length)
+                break;
+            if (uart.text[shown + 1] == 0) {
+                if (shown + 2 >= uart.length)
+                    break;
+                exitCode = (unsigned char)uart.text[shown + 2];
+                shown += 3;
+                break;
+            }
+        }
+        fputc(c, stdout);
+        shown++;
+    }
+    fflush(stdout);
 }
 
 static bool loadRom(P1 &chip, const char *path, const char *argv0)
@@ -93,6 +124,11 @@ int main(int argc, char *argv[])
     if (!clkfreq)
         clkfreq = 80000000;
 
+    // P30 idles high when no cog drives it, as on a board with a Prop Plug
+    // (its FTDI chip's RXD has a pull-up): a program that stops its cog
+    // right after the last byte (propgcc's exit hook) still ends it with
+    // a good stop bit
+    chip.setInputs(chip.inputs | 1u << 30, 0);
     uart.attach(chip, 30, clkfreq, baud);
     if (sramImage) {
         if (!sram.load(sramImage)) {
@@ -108,24 +144,26 @@ int main(int argc, char *argv[])
     uint64_t step = clkfreq / 1000;             // 1 ms
     uint64_t t = 0;
     bool found = false;
-    while (t < end && chip.anyRunning() && !found) {
+    while (t < end && chip.anyRunning() && !found && exitCode < 0) {
         t += step;
         chip.run(t);
         uart.flush(t);
-        int n;
-        const char *s = uart.take(&n);
-        fwrite(s, 1, (size_t)n, stdout);
-        fflush(stdout);
+        output();
         found = until && strstr(uart.text, until);
     }
-    if (!found) {
+    if (!found && exitCode < 0) {
         uart.flush(t + step);
-        int n;
-        const char *s = uart.take(&n);
-        fwrite(s, 1, (size_t)n, stdout);
+        output();
         found = until && strstr(uart.text, until);
     }
-    fprintf(stderr, "\n[p1run: %.3f s emulated, %s]\n", (double)t / clkfreq,
-            found ? "text found" : chip.anyRunning() ? "time limit" : "all cogs stopped");
+    char why[32];
+    if (exitCode >= 0)
+        snprintf(why, sizeof(why), "exit %d", exitCode);
+    else
+        snprintf(why, sizeof(why), "%s", found ? "text found" :
+                 chip.anyRunning() ? "time limit" : "all cogs stopped");
+    fprintf(stderr, "\n[p1run: %.3f s emulated, %s]\n", (double)t / clkfreq, why);
+    if (exitCode >= 0)
+        return exitCode;
     return until && !found ? 2 : 0;
 }

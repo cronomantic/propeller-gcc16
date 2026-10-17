@@ -2400,6 +2400,21 @@ propeller_use_frame_pointer(void)
     return frame_pointer_needed;
 }
 
+/* A function with a non-local label (the receiver of __builtin_setjmp, or
+   the target of a non-local goto) keeps its frame pointer.  Without it,
+   locals are addressed from sp with the offset the register allocator
+   tracks through the function; the receiver is reached only by the jump,
+   which restores sp as it was at the setjmp, and the allocator took the
+   offset at the label from the function's start: after an alloca the
+   receiver read its locals 20 bytes off (gcc.c-torture/execute/
+   built-in-setjmp.c at -O2).  The jump restores the frame pointer too, so
+   addresses from it are right.  */
+static bool
+propeller_frame_pointer_required (void)
+{
+    return cfun->has_nonlocal_label;
+}
+
 static HOST_WIDE_INT
 propeller_compute_frame_info (void)
 {
@@ -4404,6 +4419,9 @@ propeller_lra_p (void)
 
 #undef TARGET_LRA_P
 #define TARGET_LRA_P propeller_lra_p
+
+#undef TARGET_FRAME_POINTER_REQUIRED
+#define TARGET_FRAME_POINTER_REQUIRED propeller_frame_pointer_required
 
 
 /* Implement TARGET_HARD_REGNO_NREGS.  */

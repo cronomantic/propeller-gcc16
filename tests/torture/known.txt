@@ -1,0 +1,21 @@
+# Torture tests that are expected not to pass, and why.  run.py fails the
+# run only on a FAIL, TIMEOUT, ICE, CE or XPASS that is not listed here.
+# NOFIT (too big for the model) and UNSUPPORTED never fail it.
+#
+#   TEST  STATUS  [MODELS|*]  [OPTS|*]  # why
+#
+# Alignments above 4 bytes: the back end's object file alignment is 4
+# (BIGGEST_ALIGNMENT 32 bits, MAX_OFILE_ALIGNMENT not raised above it), so
+# aligned(8) and larger are refused.
+20010904-1      CE  *  *   # over-aligned struct
+20010904-2      CE  *  *   # over-aligned struct
+align-3         CE  *  *   # aligned(256) function
+pr122000        CE  *  *   # aligned(sizeof (long long))
+pr23467         CE  *  *   # aligned(8) variable
+pr68532         CE  *  *   # vector-aligned array
+pr77718         CE  *  *   # aligned(8)
+pr92904         CE  *  *   # aligned(16) and (32) locals
+stkalign        CE  *  *   # over-aligned local
+struct-cpy-1    CE  *  *   # aligned(8) struct
+# No __int128 on a 32-bit target (the test does not ask for int128)
+pr105613        CE  *  *   # __int128

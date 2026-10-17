@@ -2,7 +2,8 @@
 # and tested with.  The URLs are relative to this repository's, so they
 # point to forks of the same names next to it on GitHub:
 #   binutils-propeller  <- totalspectrum/binutils-propeller
-#   proplib             <- totalspectrum/proplib
+#   proplib             <- totalspectrum/proplib (branch propgcc16: a printf
+#                          fix, "%.0f")
 #   propeller-load      <- dbetz/propeller-load
 #   OpenSpin            <- parallaxinc/OpenSpin (branch propgcc16: a fix for
 #                          the include path on Windows)
@@ -14,6 +15,7 @@
 	path = deps/proplib
 	url = ../proplib.git
 	shallow = true
+	branch = propgcc16
 [submodule "deps/propeller-load"]
 	path = deps/propeller-load
 	url = ../propeller-load.git
