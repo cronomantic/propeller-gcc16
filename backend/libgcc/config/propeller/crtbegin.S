@@ -126,14 +126,29 @@ X_loop  xmmio   rdlong, r0, r9  ' VADDR
         cmp     r0, r1 wz
   if_nz brs     #X_copy
   
+        '' The copies and clears are done here, a byte at a time through
+        '' xmmio (which reaches hub and external memory alike), rather
+        '' than with memcpy and memset: a program may define its own,
+        '' and in XMMC those cannot read external memory through a
+        '' pointer -- they copied hub garbage over the initialised data
+        '' and the program hung before main.
 X_clear
         mov     r1, #0
-        lcall   #_memset
+X_clear_loop
+        xmmio   wrbyte, r1, r0
+        add     r0, #1
+        sub     r2, #1 wz
+  if_nz brs     #X_clear_loop
         brs     #X_next
 
 X_copy
-        lcall   #_memcpy
-        
+        xmmio   rdbyte, r3, r1
+        xmmio   wrbyte, r3, r0
+        add     r0, #1
+        add     r1, #1
+        sub     r2, #1 wz
+  if_nz brs     #X_copy
+
 X_next
         sub     r8, #1 wz
   if_nz brs     #X_loop

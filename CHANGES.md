@@ -262,6 +262,23 @@ Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
   allocator took the offset at the label from the function's start.  A
   function with a non-local label now keeps its frame pointer
   (`TARGET_FRAME_POINTER_REQUIRED`), which the jump restores.
+* **An XMMC program that defined its own `memcpy` hung before `main`**
+  (twenty `gcc.c-torture/execute/builtins` tests).  The XMM start-up code
+  (`crtbegin.S`) copied the initialised data out of the external image
+  with `memcpy` and cleared `.bss` with `memset`, so it used the
+  program's versions when there were some; in XMMC an ordinary function
+  cannot read external memory through a pointer, and the copy wrote hub
+  garbage over the data.  The start-up code now copies and clears by
+  itself, through `xmmio`, as the hub models already clear `.bss`.
+* **Comparisons with NaNs were wrong** (eleven tests of
+  `gcc.c-torture/execute/ieee`).  `__unorddf2` and `__unordsf2` set `r1`
+  instead of `r0` for "unordered", so they returned the first operand's
+  low word: `isunordered`, `isless`, `isgreater`... got a `double` NaN
+  wrong, and a `float` one whenever the first operand was zero.  And
+  all four comparison routines (`__cmpsf2`, `__cmpdf2` and the two
+  above) detected NaNs with a signed-overflow test that missed those
+  with the sign bit set: `-NaN < 1` was true.  NaNs of either sign are
+  now detected from the bits with the sign dropped.
 * **Every negative `double` converted to `float` came out positive**
   (`conversion.c` at `-O0`, every memory model, with `-m64bit-doubles`;
   through `__floatdisf`, `long long` to `float` too).  `__truncdfsf2`

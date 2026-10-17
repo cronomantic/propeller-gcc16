@@ -1337,12 +1337,19 @@ ___gesf2
 ___gtsf2
 	neg	r2,#1	'' default for all of these is -1 (a false comparison)
 ___docmpsf2
-	'' check for unordered compares
-	mvi	r3, #0x007fffff
-	adds	r0,r3 nr,wc
- if_c	brs	#unordered
-	adds	r1,r3 nr,wc
- if_c	brs	#unordered
+	'' check for unordered compares: a NaN, of either sign, is a value
+	'' that shifted left by one (the sign dropped) is above 0xFF000000
+	'' (an infinity's).  The signed-overflow test used before missed
+	'' NaNs with the sign bit set, which were then compared as numbers.
+	mvi	r3, #0xFF000000
+	mov	r4, r0
+	shl	r4, #1
+	cmp	r4, r3 wz,wc
+ if_a	brs	#unordered
+	mov	r4, r1
+	shl	r4, #1
+	cmp	r4, r3 wz,wc
+ if_a	brs	#unordered
 	'' ok, now see if r0 is negative
 	shl	r0,#1 nr,wc
  if_c	brs	#negr0
@@ -1382,16 +1389,25 @@ unordered
 #ifdef L_unordsf2
 	.global ___unordsf2
 ___unordsf2
-	'' check for unordered compares
-	mvi	r3, #0x007fffff
-	adds	r0,r3 nr,wc
- if_c	brs	#.unordered
-	adds	r1,r3 nr,wc
- if_c	brs	#.unordered
+	'' check for unordered compares: a NaN, of either sign, is a value
+	'' that shifted left by one (the sign dropped) is above 0xFF000000
+	'' (an infinity's).  The signed-overflow test used before missed
+	'' NaNs with the sign bit set, which were then compared as numbers.
+	mvi	r3, #0xFF000000
+	mov	r2, r0
+	shl	r2, #1
+	cmp	r2, r3 wz,wc
+ if_a	brs	#.unordered
+	mov	r2, r1
+	shl	r2, #1
+	cmp	r2, r3 wz,wc
+ if_a	brs	#.unordered
 	mov	r0,#0
 	lret
 .unordered
-	mov	r1,#1
+	'' the result is in r0 (this set r1, and returned the first
+	'' operand: right only when that was the NaN, or non-zero)
+	mov	r0,#1
 	lret
 #endif
 #ifdef L_cmpdf2
@@ -1424,14 +1440,24 @@ ___nedf2
 ___eqdf2
 	neg	r4,#1
 ___docmpdf2
-	'' check for unordered compares
-	mvi	r5, #0x000fffff
-	add	r0,__MASK_FFFFFFFF nr,wc
-	addsx	r1,r5 nr,wc
- if_c	brs	unordered
-	add	r2,__MASK_FFFFFFFF nr,wc
-	addsx	r3,r5 nr,wc
- if_c	brs	unordered
+	'' check for unordered compares: a NaN, of either sign, is a value
+	'' whose high word shifted left by one (the sign dropped), with a 1
+	'' or'ed in when the low word is not zero, is above 0xFFE00000 (an
+	'' infinity's).  The signed-overflow test used before missed NaNs
+	'' with the sign bit set, which were then compared as numbers.
+	mvi	r5, #0xFFE00000
+	mov	r6, r1
+	shl	r6, #1
+	cmp	r0, #0 wz
+ if_nz	or	r6, #1
+	cmp	r6, r5 wz,wc
+ if_a	brs	unordered
+	mov	r6, r3
+	shl	r6, #1
+	cmp	r2, #0 wz
+ if_nz	or	r6, #1
+	cmp	r6, r5 wz,wc
+ if_a	brs	unordered
 	
 	'' ok, now see if a=r0,r1 is negative
 	shl	r1,#1 nr,wc
@@ -1478,18 +1504,30 @@ unordered
 #ifdef L_unorddf2
 	.global ___unorddf2
 ___unorddf2
-	'' check for unordered compares
-	mvi	r4, #0x000fffff
-	add	r0,__MASK_FFFFFFFF nr,wc
-	addsx	r1,r4 nr,wc
- if_c	brs	#.unordered
-	add	r2,__MASK_FFFFFFFF nr,wc
-	addsx	r3,r4 nr,wc
- if_c	brs	#.unordered
+	'' check for unordered compares: a NaN, of either sign, is a value
+	'' whose high word shifted left by one (the sign dropped), with a 1
+	'' or'ed in when the low word is not zero, is above 0xFFE00000 (an
+	'' infinity's).  The signed-overflow test used before missed NaNs
+	'' with the sign bit set, which were then compared as numbers.
+	mvi	r4, #0xFFE00000
+	mov	r5, r1
+	shl	r5, #1
+	cmp	r0, #0 wz
+ if_nz	or	r5, #1
+	cmp	r5, r4 wz,wc
+ if_a	brs	#.unordered
+	mov	r5, r3
+	shl	r5, #1
+	cmp	r2, #0 wz
+ if_nz	or	r5, #1
+	cmp	r5, r4 wz,wc
+ if_a	brs	#.unordered
 	mov	r0,#0
 	lret
 .unordered
-	mov	r1,#1
+	'' the result is in r0 (this set r1, and returned the first
+	'' operand's low word: "ordered" for most double NaNs)
+	mov	r0,#1
 	lret
 #endif
 

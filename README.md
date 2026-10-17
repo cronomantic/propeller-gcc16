@@ -116,7 +116,9 @@ every live block after each step.
 
 runs GCC's `gcc.c-torture/execute` tests (1,692 self-checking programs,
 from the GCC sources that `build.sh` unpacks into `work/`) in the
-emulator: each is compiled for the model and level, linked with
+emulator; `--suite ieee` and `--suite builtins` run the 69 floating-point
+and 59 library-call tests of its subdirectories, with what their `.exp`
+and `.x` files add.  Each test is compiled for the model and level, linked with
 `tests/torture/exit.c` (so `exit` and `abort` end with propgcc's serial
 exit sequence, which `p1run` turns into its exit status) and run.  The
 tests' DejaGnu directives (`dg-options`, `dg-require-effective-target`,
@@ -127,14 +129,17 @@ XMMC, XMM single, XMM split, XMM) at `-O0`, `-O2` and `-Os`, 1,649 to
 1,669 pass; the rest do not fit in memory (up to 17, in LMM at `-O0`),
 need what the target lacks (21), are known limitations (`__int128`,
 nested functions in CMM) or are too slow for the time limit, mostly at
-`-O0` from external memory (they pass with a longer `--seconds`).  The whole matrix takes about 25 minutes on 8 cores.
+`-O0` from external memory (they pass with a longer `--seconds`).
+`ieee` passes in full everywhere, `builtins` too apart from what does not
+fit in LMM and object-size checks too slow for the limit from external
+memory.  The whole matrix takes about 25 minutes on 8 cores.
 
 ## Continuous integration and binaries
 
 `.github/workflows/build.yml` builds the toolchain on Linux (Ubuntu
 24.04) and on Windows (MSYS2 UCRT64) on every push and pull request,
 and runs `tests/run.sh` with `emu/`'s emulator; on Linux, also the
-torture tests in LMM at `-O2`.  Each run keeps the installed toolchain as an
+three torture suites in LMM at `-O2`.  Each run keeps the installed toolchain as an
 artifact (`propgcc-16-linux-x86_64.tar.xz`,
 `propgcc-16-windows-x86_64.zip`, with the UCRT64 runtime DLLs next to the
 programs).  Pushing a tag `v*` publishes the Windows one as a GitHub

@@ -318,6 +318,10 @@ def x_eval(script, flags, state):
         elif head == "lappend" and len(words) > 2 and words[1][1] == "additional_flags":
             for w in words[2:]:
                 state["flags"] += shlex.split(w[1])
+        elif head == "set" and len(words) > 2 and words[1][1] == "additional_flags":
+            # replaces what the .exp set (and what came before)
+            state["set"] = [f for w in words[2:] for f in shlex.split(w[1])]
+            state["flags"] = []
         elif head == "set" and len(words) > 2 and words[1][1] == "torture_execute_xfail":
             state["xfail"] = True
         elif head == "return":
@@ -327,12 +331,13 @@ def x_eval(script, flags, state):
 
 
 def x_file(path, flags):
-    """(skip, extra flags, xfail) from TEST.x next to TEST.c, if any."""
+    """(skip, extra flags, xfail, flags replacing the suite's or None) from
+    TEST.x next to TEST.c, if any."""
     x = path[:-2] + ".x"
-    state = {"flags": [], "xfail": False, "ret": None}
+    state = {"flags": [], "xfail": False, "ret": None, "set": None}
     if os.path.exists(x):
         x_eval(open(x, encoding="utf-8", errors="replace").read(), flags, state)
-    return state["ret"] == 1, state["flags"], state["xfail"]
+    return state["ret"] == 1, state["flags"], state["xfail"], state["set"]
 
 
 # The test directories: where they are, what their .exp adds to every
@@ -365,9 +370,11 @@ def run_one(path, model, opt, exit_obj, args, logdir):
     status, extra, xfail, factor, compile_only, reason = plan(path, flags)
     if status:
         return name, status, reason
-    skip, x_flags, x_xfail = x_file(path, flags)
+    skip, x_flags, x_xfail, x_set = x_file(path, flags)
     if skip:
         return name, "UNSUPPORTED", "its .x leaves it out"
+    if x_set is not None:
+        flags = [opt, "-m" + model] + BASE_FLAGS + x_set
     extra += x_flags
     xfail = xfail or x_xfail
     sources = [path] + (suite["with"](path) if "with" in suite else [])

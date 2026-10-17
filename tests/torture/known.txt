@@ -32,3 +32,9 @@ pr91137         TIMEOUT  *  *   # slow in CMM -O0
 strcpy-1        TIMEOUT  *  *   # slow: 65 s in XMM -O0
 strncmp-1       TIMEOUT  *  *   # slow in CMM -O0
 vla-dealloc-1   TIMEOUT  *  *   # slow: 161 s in XMM -O0
+# builtins/*-chk run their object-size checks only when optimising (at
+# -O0 main_test returns at once): nested loops over offsets and lengths,
+# 13 s in CMM and up to minutes from external memory, so in the XMM
+# models one or another goes past the limit (each passes with a longer
+# --seconds; the longest: strcpy-chk, 274 s emulated in XMM at -O2).
+builtins/*-chk  TIMEOUT  xmm-single,xmm-split,xmm  -O2,-Os  # slow when optimising
