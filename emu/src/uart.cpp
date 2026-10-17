@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cronomantic
 // uart.cpp -- Serial receiver on an emulated P1 pin (see uart.h).
 #include "uart.h"
+#include <cstring>
 
 Uart::Uart()
 {
@@ -72,4 +73,15 @@ const char *Uart::take(int *count)
     *count = length - taken;
     taken = length;
     return p;
+}
+
+void Uart::discard(int n)
+{
+    if (n <= 0)
+        return;
+    if (n > length)
+        n = length;
+    memmove(text, text + n, (size_t)(length - n) + 1);
+    length -= n;
+    taken = taken > n ? taken - n : 0;
 }

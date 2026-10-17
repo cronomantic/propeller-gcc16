@@ -726,7 +726,8 @@
 (define_insn_and_split "subdi3"
   [(set (match_operand:DI 0 "propeller_dst_operand" "=&rC, &rC")
         (minus:DI (match_operand:DI 1 "propeller_dst_operand" "0, 0")
-                  (match_operand:DI 2 "propeller_dst_operand" "rC, 0")))]
+                  (match_operand:DI 2 "propeller_dst_operand" "rC, 0")))
+   (clobber (reg:CC CC_REG))]
   ""
   "#"
   "reload_completed"
@@ -2965,6 +2966,11 @@
 ;; operands due to the way reload works
 ;; we handle this by doing a split if the memory load is required
 
+;; Splits after reload into a sequence that sets the flags (CC_REG), so
+;; the pattern says it clobbers them: without that, a comparison whose
+;; result was still to be used could be placed before it and its flags
+;; lost (csmith seed 1399: djnz_lmm, with its counter spilled, became
+;; "sub r4,#1 wz" between a flag test and its branch).
 (define_insn_and_split "djnz"
   [(set (pc)
         (if_then_else
@@ -2975,6 +2981,7 @@
    (set (match_operand:SI 2 "nonimmediate_operand" "=1,?X,?X")
         (plus:SI (match_dup 1)(const_int -1)))
    (clobber (match_scratch:SI 3 "=X,&1,&?r"))
+   (clobber (reg:CC CC_REG))
   ]
 "!TARGET_LMM"
 {
@@ -3010,6 +3017,7 @@
    (set (match_operand:SI 2 "nonimmediate_operand" "=1,?X,?X")
         (plus:SI (match_dup 1)(const_int -1)))
    (clobber (match_scratch:SI 3 "=X,&1,&?r"))
+   (clobber (reg:CC CC_REG))
   ]
 "TARGET_LMM && !TARGET_CMM"
 {
@@ -3047,6 +3055,7 @@
    (set (match_operand:SI 2 "nonimmediate_operand" "=1,?X,?X")
         (plus:SI (match_dup 1)(const_int -1)))
    (clobber (match_scratch:SI 3 "=X,&1,&?r"))
+   (clobber (reg:CC CC_REG))
   ]
 ""
 {
@@ -3268,6 +3277,7 @@
   [(set (match_operand:SI 0 "propeller_dst_operand" "=&rC")
         (unspec_volatile:SI [(match_operand:SI 1 "propeller_dst_operand" "0")]
 	        UNSPEC_COGSTATE))
+   (clobber (reg:CC CC_REG))
    ]
   ""
   "#"
@@ -3334,7 +3344,8 @@
 )
 (define_insn_and_split "locknew"
    [(set (match_operand:SI 0 "propeller_dst_operand" "=rC")
-         (unspec_volatile:SI [(const_int UNSPEC_LOCKNEW)] UNSPEC_LOCKSTATE))]
+         (unspec_volatile:SI [(const_int UNSPEC_LOCKNEW)] UNSPEC_LOCKSTATE))
+    (clobber (reg:CC CC_REG))]
   ""
   "#"
   "reload_completed"
@@ -3397,7 +3408,8 @@
   [(set (match_operand:SI 0 "propeller_dst_operand" "=&rC")
         (unspec:SI [(match_operand:SI 1 "propeller_dst_operand" "rC")]
 	        UNSPEC_LOCKSTATE))
-   (unspec_volatile [(match_dup 1)] UNSPEC_LOCKSET)]
+   (unspec_volatile [(match_dup 1)] UNSPEC_LOCKSET)
+   (clobber (reg:CC CC_REG))]
   ""
   "#"
   "reload_completed"

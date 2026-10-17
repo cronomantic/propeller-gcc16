@@ -262,6 +262,18 @@ Found by GCC's own `gcc.c-torture/execute` suite, run in the emulator
   allocator took the offset at the label from the function's start.  A
   function with a non-local label now keeps its frame pointer
   (`TARGET_FRAME_POINTER_REQUIRED`), which the jump restores.
+* **Seven patterns clobbered the flags without saying so** (found by
+  csmith, reduced with cvise: a store in the right operand of `||` lost
+  at LMM `-O2`).  `subdi3`, the three `djnz` patterns, `coginit`,
+  `locknew` and `lockset` split after reload into sequences that set the
+  flags (the 64-bit subtraction's `sub`/`subx` pair, a spilled loop
+  counter's `sub ... wz`, the C-flag results of the hub operations), but
+  their RTL did not mention `CC_REG`, an inheritance of the GCC 6 back
+  end's `cc0`-style "conds" attributes.  Passes before the split could
+  therefore keep a comparison's result in the flags across one of them:
+  in the case found, a loop's `djnz` became `sub r4,#1 wz` between a
+  flag test and its branch, and the branch tested the counter instead.
+  The seven now declare `(clobber (reg:CC CC_REG))`.
 * **An XMMC program that defined its own `memcpy` hung before `main`**
   (twenty `gcc.c-torture/execute/builtins` tests).  The XMM start-up code
   (`crtbegin.S`) copied the initialised data out of the external image

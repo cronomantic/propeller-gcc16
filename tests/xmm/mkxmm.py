@@ -33,6 +33,10 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SRAM_SIZE = 128 * 1024
+# xmm_boot.spin puts the cache (8 KB), its tags and the mailboxes at the top
+# of hub RAM; the stack grows down from the mailboxes, towards what the
+# program keeps in the hub (all its data in XMMC)
+MBOX = 32768 - 8192 - 128 * 4 - 8 * 2 * 4 - 4
 
 
 class Elf:
@@ -128,6 +132,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("elf")
     ap.add_argument("--openspin", default=shutil.which("openspin") or "openspin")
+    ap.add_argument("--min-stack", type=int, default=1024,
+                    help="bytes of hub RAM the stack needs at least (default 1024)")
     ap.add_argument("--xmem-include",
                     default=os.path.join(ROOT, "deps", "propeller-load", "xmem-drivers"))
     args = ap.parse_args()
@@ -144,6 +150,12 @@ def main():
     need = max(len(image), ram_base + ram_end)
     if need > SRAM_SIZE:
         sys.exit("%s: %d bytes do not fit in the %d KB SRAM" % (args.elf, need, SRAM_SIZE // 1024))
+    # what the program puts in hub RAM (data, .bss, kernel extensions):
+    # it must end below the cache and the mailboxes, with room for the stack
+    hub_end = max([p[3] + p[5] for i, p in enumerate(elf.programs) if p[3] < 0x8000 and p[5]] + [0])
+    if hub_end + args.min_stack > MBOX:
+        sys.exit("%s: %d bytes in hub RAM do not fit below the cache and the mailboxes ($%04X) "
+                 "with %d bytes for the stack" % (args.elf, hub_end, MBOX, args.min_stack))
     stem = os.path.splitext(args.elf)[0]
     open(stem + ".xmm", "wb").write(image)
 
@@ -160,8 +172,9 @@ def main():
     subprocess.run([args.openspin, "-q", "-b", "-I", HERE, "-I", args.xmem_include, "-I", tmp,
                     "-o", boot, os.path.join(tmp, "xmm_boot.spin")], check=True)
     shutil.rmtree(tmp, ignore_errors=True)
-    print("%s: image %d bytes at $%08X, RAM space at SRAM $%05X, boot %d bytes"
-          % (args.elf, len(image), base, ram_base, os.path.getsize(boot)))
+    print("%s: image %d bytes at $%08X, RAM space at SRAM $%05X, hub RAM to $%04X (%d bytes for "
+          "the stack), boot %d bytes" % (args.elf, len(image), base, ram_base, hub_end, MBOX - hub_end,
+                                         os.path.getsize(boot)))
 
 
 if __name__ == "__main__":

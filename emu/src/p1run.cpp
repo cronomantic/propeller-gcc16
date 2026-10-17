@@ -62,6 +62,12 @@ static void output()
         shown++;
     }
     fflush(stdout);
+    // the UART keeps 64 KB of text: drop what is out, keeping the last
+    // 1 KB for --until
+    if (shown > Uart::TEXT_SIZE / 2) {
+        uart.discard(shown - 1024);
+        shown = 1024;
+    }
 }
 
 static bool loadRom(P1 &chip, const char *path, const char *argv0)

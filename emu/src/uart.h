@@ -21,6 +21,9 @@ public:
     void flush(uint64_t t);
     // Characters received since the last call (for live output).
     const char *take(int *count);
+    // Forget the first n characters of text (already used): text keeps
+    // only what came after, so that a long output does not fill it.
+    void discard(int n);
     // The pin hook attach() installs; a program that watches other pins
     // too installs its own and calls this one from it (ctx: the Uart).
     static void onPins(P1 &chip, uint64_t when, void *ctx);
